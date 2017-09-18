@@ -40,7 +40,7 @@
 
 Name: sssd
 Version: 1.15.2
-Release: 50%{?dist}.2
+Release: 50.el7_4.2.ns7
 Group: Applications/System
 Summary: System Security Services Daemon
 License: GPLv3+
@@ -242,6 +242,11 @@ Patch0190: 0190-ad_account_can_shortcut-shortcut-if-ID-is-unknown.patch
 
 #This patch should not be removed in RHEL-7
 Patch999: 0999-NOUPSTREAM-Default-to-root-if-sssd-user-is-not-spec
+
+# Backport patch
+# https://pagure.io/SSSD/sssd/issue/3461
+# https://bugzilla.redhat.com/show_bug.cgi?id=1462769
+Patch1000: 1000-NETHSERVER-bad-samba-auth.patch
 
 ### Dependencies ###
 
