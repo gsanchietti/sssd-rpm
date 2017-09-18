@@ -1,0 +1,31 @@
+From 9e7bb71e02af7cf8fe8b593ddc762a09183ff32c Mon Sep 17 00:00:00 2001
+From: Sumit Bose <sbose@redhat.com>
+Date: Mon, 22 May 2017 15:04:17 +0200
+Subject: [PATCH 134/135] test: make sure p11_child is build for pam-srv-tests
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Reviewed-by: Fabiano Fidêncio <fidencio@redhat.com>
+(cherry picked from commit ec9ac22d699a17d590b1d4ba9ba3750eb719f340)
+---
+ Makefile.am | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/Makefile.am b/Makefile.am
+index 370d6442ec58a14946ad288a23c696f25ca98f47..a6279133b56dcd5bcbd1306ae8f2ce18d90c2c12 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -2356,6 +2356,9 @@ nss_srv_tests_LDADD = \
+ EXTRA_pam_srv_tests_DEPENDENCIES = \
+     $(ldblib_LTLIBRARIES) \
+     $(NULL)
++if HAVE_NSS
++EXTRA_pam_srv_tests_DEPENDENCIES += p11_child
++endif
+ pam_srv_tests_SOURCES = \
+     $(TEST_MOCK_RESP_OBJ) \
+     src/tests/cmocka/test_pam_srv.c \
+-- 
+2.9.3
+

@@ -1,0 +1,92 @@
+From a2bfa4d2074cacc5d30f17a3b3af260ec9eaaa59 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Fabiano=20Fid=C3=AAncio?= <fidencio@redhat.com>
+Date: Thu, 27 Apr 2017 11:24:45 +0200
+Subject: [PATCH 125/127] CACHE_REQ_RESULT: Introduce
+ cache_req_create_ldb_result_from_msg_list()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Similarly to what cache_req_create_ldb_result_from_msg() does this new
+function creates a new ldb_result from a list of ldb_message.
+
+It's going to be used in the follow-up patch where some messages from
+ldb_result may be filtered and then a new ldb_result has to be created.
+
+Related:
+https://pagure.io/SSSD/sssd/issue/3362
+
+Signed-off-by: Fabiano Fidêncio <fidencio@redhat.com>
+
+Reviewed-by: Pavel Březina <pbrezina@redhat.com>
+(cherry picked from commit 180e0b282be6aeb047c4b24b46e0b56afba1fdc8)
+---
+ src/responder/common/cache_req/cache_req_private.h |  5 ++++
+ src/responder/common/cache_req/cache_req_result.c  | 35 ++++++++++++++++++++++
+ 2 files changed, 40 insertions(+)
+
+diff --git a/src/responder/common/cache_req/cache_req_private.h b/src/responder/common/cache_req/cache_req_private.h
+index 851005c389f994b1bd2d04cda9b68df8b18492cc..c0ee5f969f2a171b8a6eb396b3d14b593d157b76 100644
+--- a/src/responder/common/cache_req/cache_req_private.h
++++ b/src/responder/common/cache_req/cache_req_private.h
+@@ -137,6 +137,11 @@ cache_req_create_and_add_result(TALLOC_CTX *mem_ctx,
+                                 size_t *_num_results);
+ 
+ struct ldb_result *
++cache_req_create_ldb_result_from_msg_list(TALLOC_CTX *mem_ctx,
++                                          struct ldb_message **ldb_msgs,
++                                          size_t ldb_msg_count);
++
++struct ldb_result *
+ cache_req_create_ldb_result_from_msg(TALLOC_CTX *mem_ctx,
+                                      struct ldb_message *ldb_msg);
+ 
+diff --git a/src/responder/common/cache_req/cache_req_result.c b/src/responder/common/cache_req/cache_req_result.c
+index e20ae5653acf22a2e0190ef6a88836c7fab9868e..366ba748082336c7c752b576cfd7b8fb8cd82fcf 100644
+--- a/src/responder/common/cache_req/cache_req_result.c
++++ b/src/responder/common/cache_req/cache_req_result.c
+@@ -122,6 +122,41 @@ cache_req_create_and_add_result(TALLOC_CTX *mem_ctx,
+ }
+ 
+ struct ldb_result *
++cache_req_create_ldb_result_from_msg_list(TALLOC_CTX *mem_ctx,
++                                          struct ldb_message **ldb_msgs,
++                                          size_t ldb_msg_count)
++{
++    struct ldb_result *ldb_result;
++
++    if (ldb_msgs == NULL || ldb_msgs[0] == NULL) {
++        DEBUG(SSSDBG_CRIT_FAILURE, "No message set!\n");
++        return NULL;
++    }
++
++    ldb_result = talloc_zero(NULL, struct ldb_result);
++    if (ldb_result == NULL) {
++        return NULL;
++    }
++
++    ldb_result->extended = NULL;
++    ldb_result->controls = NULL;
++    ldb_result->refs = NULL;
++    ldb_result->count = ldb_msg_count;
++    ldb_result->msgs = talloc_zero_array(ldb_result, struct ldb_message *,
++                                         ldb_msg_count + 1);
++    if (ldb_result->msgs == NULL) {
++        talloc_free(ldb_result);
++        return NULL;
++    }
++
++    for (size_t i = 0; i < ldb_msg_count; i++) {
++        ldb_result->msgs[i] = talloc_steal(ldb_result->msgs, ldb_msgs[i]);
++    }
++
++    return ldb_result;
++}
++
++struct ldb_result *
+ cache_req_create_ldb_result_from_msg(TALLOC_CTX *mem_ctx,
+                                      struct ldb_message *ldb_msg)
+ {
+-- 
+2.9.3
+

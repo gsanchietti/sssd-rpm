@@ -1,0 +1,372 @@
+From a35b5c33a76857ad9223363e15558facec5c269d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Pavel=20B=C5=99ezina?= <pbrezina@redhat.com>
+Date: Thu, 8 Jun 2017 11:46:25 +0200
+Subject: [PATCH 173/181] IFP: Add domain and domainname attributes to the user
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+org.freedekstop.sssd.infopipe.Users.User gets two new attributes:
+- domain: object path of user's domain
+- domainname: user's domain name
+
+org.freedekstop.sssd.infopipe.GetUserAttr can now request new attribute:
+- domainname: user's domain name
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/2714
+
+Reviewed-by: Fabiano Fidêncio <fidencio@redhat.com>
+(cherry picked from commit 37d2194cc9ea4d0254c88a3419e2376572562bab)
+---
+ src/responder/ifp/ifp_iface.c           |  2 +
+ src/responder/ifp/ifp_iface.xml         |  2 +
+ src/responder/ifp/ifp_iface_generated.c | 18 ++++++++
+ src/responder/ifp/ifp_iface_generated.h |  4 ++
+ src/responder/ifp/ifp_private.h         |  4 ++
+ src/responder/ifp/ifp_users.c           | 46 ++++++++++++++++++++
+ src/responder/ifp/ifp_users.h           |  8 ++++
+ src/responder/ifp/ifpsrv_cmd.c          |  8 ++++
+ src/responder/ifp/ifpsrv_util.c         | 74 ++++++++++++++++++++++++++++++++-
+ src/tests/cmocka/test_ifp.c             | 12 ++++--
+ 10 files changed, 173 insertions(+), 5 deletions(-)
+
+diff --git a/src/responder/ifp/ifp_iface.c b/src/responder/ifp/ifp_iface.c
+index e413e74f955c067a0efbe385a08b4b2cc6f2bba1..3293b92d750d33b2ecf77a03098c5169d052c924 100644
+--- a/src/responder/ifp/ifp_iface.c
++++ b/src/responder/ifp/ifp_iface.c
+@@ -104,6 +104,8 @@ struct iface_ifp_users_user iface_ifp_users_user = {
+     .get_loginShell = ifp_users_user_get_login_shell,
+     .get_uniqueID = ifp_users_user_get_unique_id,
+     .get_groups = ifp_users_user_get_groups,
++    .get_domain = ifp_users_user_get_domain,
++    .get_domainname = ifp_users_user_get_domainname,
+     .get_extraAttributes = ifp_users_user_get_extra_attributes
+ };
+ 
+diff --git a/src/responder/ifp/ifp_iface.xml b/src/responder/ifp/ifp_iface.xml
+index 0a23f56907f64c4c24db3ec3c0a312adbdb3edc8..ce071bb999bd207b8cc81f054da80de52a13d3df 100644
+--- a/src/responder/ifp/ifp_iface.xml
++++ b/src/responder/ifp/ifp_iface.xml
+@@ -188,6 +188,8 @@
+         <property name="loginShell" type="s" access="read" />
+         <property name="uniqueID" type="s" access="read" />
+         <property name="groups" type="ao" access="read" />
++        <property name="domain" type="o" access="read" />
++        <property name="domainname" type="s" access="read" />
+         <property name="extraAttributes" type="a{sas}" access="read" />
+     </interface>
+ 
+diff --git a/src/responder/ifp/ifp_iface_generated.c b/src/responder/ifp/ifp_iface_generated.c
+index 211646b6760d15e0df55ac20b9611b800b11d16c..51db4a9e5c7d72663f8845bd0da22d3f21526be8 100644
+--- a/src/responder/ifp/ifp_iface_generated.c
++++ b/src/responder/ifp/ifp_iface_generated.c
+@@ -982,6 +982,24 @@ const struct sbus_property_meta iface_ifp_users_user__properties[] = {
+         NULL, /* no invoker */
+     },
+     {
++        "domain", /* name */
++        "o", /* type */
++        SBUS_PROPERTY_READABLE,
++        offsetof(struct iface_ifp_users_user, get_domain),
++        sbus_invoke_get_o,
++        0, /* not writable */
++        NULL, /* no invoker */
++    },
++    {
++        "domainname", /* name */
++        "s", /* type */
++        SBUS_PROPERTY_READABLE,
++        offsetof(struct iface_ifp_users_user, get_domainname),
++        sbus_invoke_get_s,
++        0, /* not writable */
++        NULL, /* no invoker */
++    },
++    {
+         "extraAttributes", /* name */
+         "a{sas}", /* type */
+         SBUS_PROPERTY_READABLE,
+diff --git a/src/responder/ifp/ifp_iface_generated.h b/src/responder/ifp/ifp_iface_generated.h
+index e69fc3a3efc6bdcef5d6539790908795818cd857..76f729fcb268e9c07668b3a5ee5bbd7d0b44ca16 100644
+--- a/src/responder/ifp/ifp_iface_generated.h
++++ b/src/responder/ifp/ifp_iface_generated.h
+@@ -88,6 +88,8 @@
+ #define IFACE_IFP_USERS_USER_LOGINSHELL "loginShell"
+ #define IFACE_IFP_USERS_USER_UNIQUEID "uniqueID"
+ #define IFACE_IFP_USERS_USER_GROUPS "groups"
++#define IFACE_IFP_USERS_USER_DOMAIN "domain"
++#define IFACE_IFP_USERS_USER_DOMAINNAME "domainname"
+ #define IFACE_IFP_USERS_USER_EXTRAATTRIBUTES "extraAttributes"
+ 
+ /* constants for org.freedesktop.sssd.infopipe.Groups */
+@@ -288,6 +290,8 @@ struct iface_ifp_users_user {
+     void (*get_loginShell)(struct sbus_request *, void *data, const char **);
+     void (*get_uniqueID)(struct sbus_request *, void *data, const char **);
+     void (*get_groups)(struct sbus_request *, void *data, const char ***, int *);
++    void (*get_domain)(struct sbus_request *, void *data, const char **);
++    void (*get_domainname)(struct sbus_request *, void *data, const char **);
+     void (*get_extraAttributes)(struct sbus_request *, void *data, hash_table_t **);
+ };
+ 
+diff --git a/src/responder/ifp/ifp_private.h b/src/responder/ifp/ifp_private.h
+index e800070a59f77f8ce58a2fc402e616bb773e996b..a6e5701b8d1ebb27af0c35fa3ebe0c6c00d16bd6 100644
+--- a/src/responder/ifp/ifp_private.h
++++ b/src/responder/ifp/ifp_private.h
+@@ -70,6 +70,10 @@ errno_t ifp_req_create(struct sbus_request *dbus_req,
+ /* Returns an appropriate DBus error for specific ifp_req_create failures */
+ int ifp_req_create_handle_failure(struct sbus_request *dbus_req, errno_t err);
+ 
++errno_t ifp_add_value_to_dict(DBusMessageIter *iter_dict,
++                              const char *key,
++                              const char *value);
++
+ errno_t ifp_add_ldb_el_to_dict(DBusMessageIter *iter_dict,
+                                struct ldb_message_element *el);
+ const char **
+diff --git a/src/responder/ifp/ifp_users.c b/src/responder/ifp/ifp_users.c
+index 188194f2ab356d0e67b0f26b003f3a9ce48e6acd..90b947ed9ca345fbeba6772c90f898451a0868aa 100644
+--- a/src/responder/ifp/ifp_users.c
++++ b/src/responder/ifp/ifp_users.c
+@@ -1328,6 +1328,52 @@ void ifp_users_user_get_groups(struct sbus_request *sbus_req,
+     *_size = num_groups;
+ }
+ 
++void ifp_users_user_get_domain(struct sbus_request *sbus_req,
++                               void *data,
++                               const char **_out)
++{
++    const char *domainname;
++
++    *_out = NULL;
++    ifp_users_user_get_domainname(sbus_req, data, &domainname);
++
++    if (domainname == NULL) {
++        return;
++    }
++
++    *_out = sbus_opath_compose(sbus_req, IFP_PATH_DOMAINS,
++                               domainname);
++}
++
++void ifp_users_user_get_domainname(struct sbus_request *sbus_req,
++                                   void *data,
++                                   const char **_out)
++{
++    struct ifp_ctx *ifp_ctx;
++    struct sss_domain_info *domain;
++    errno_t ret;
++
++    *_out = NULL;
++
++    ifp_ctx = talloc_get_type(data, struct ifp_ctx);
++    if (ifp_ctx == NULL) {
++        DEBUG(SSSDBG_CRIT_FAILURE, "Invalid pointer!\n");
++        return;
++    }
++
++    if (!ifp_is_user_attr_allowed(ifp_ctx, "domainname")) {
++        DEBUG(SSSDBG_TRACE_ALL, "Attribute domainname is not allowed\n");
++        return;
++    }
++
++    ret = ifp_users_user_get(sbus_req, ifp_ctx, &domain, NULL);
++    if (ret != EOK) {
++        return;
++    }
++
++    *_out = domain->name;
++}
++
+ void ifp_users_user_get_extra_attributes(struct sbus_request *sbus_req,
+                                          void *data,
+                                          hash_table_t **_out)
+diff --git a/src/responder/ifp/ifp_users.h b/src/responder/ifp/ifp_users.h
+index f8fefeb7f658b6e0a5f72371da1b025d69e6f412..715a8bc31996bfd93c21dbe263f2567bd0b50b03 100644
+--- a/src/responder/ifp/ifp_users.h
++++ b/src/responder/ifp/ifp_users.h
+@@ -103,6 +103,14 @@ void ifp_users_user_get_groups(struct sbus_request *sbus_req,
+                                const char ***_out,
+                                int *_size);
+ 
++void ifp_users_user_get_domain(struct sbus_request *sbus_req,
++                               void *data,
++                               const char **_out);
++
++void ifp_users_user_get_domainname(struct sbus_request *sbus_req,
++                                   void *data,
++                                   const char **_out);
++
+ void ifp_users_user_get_extra_attributes(struct sbus_request *sbus_req,
+                                          void *data,
+                                          hash_table_t **_out);
+diff --git a/src/responder/ifp/ifpsrv_cmd.c b/src/responder/ifp/ifpsrv_cmd.c
+index 70728e1bb656fd032b7f1c240683e8aa3b91a726..d86aed57206ba8f0a6facbd64051fa7c901513f3 100644
+--- a/src/responder/ifp/ifpsrv_cmd.c
++++ b/src/responder/ifp/ifpsrv_cmd.c
+@@ -233,6 +233,14 @@ ifp_user_get_attr_handle_reply(struct sss_domain_info *domain,
+         }
+ 
+         for (ai = 0; attrs[ai]; ai++) {
++            if (strcmp(attrs[ai], "domainname") == 0) {
++                ret = ifp_add_value_to_dict(&iter_dict, "domainname",
++                                            domain->name);
++                DEBUG(SSSDBG_MINOR_FAILURE,
++                      "Cannot add attribute %s to message\n", attrs[ai]);
++                continue;
++            }
++
+             el = sss_view_ldb_msg_find_element(domain, res->msgs[0], attrs[ai]);
+             if (el == NULL || el->num_values == 0) {
+                 DEBUG(SSSDBG_MINOR_FAILURE,
+diff --git a/src/responder/ifp/ifpsrv_util.c b/src/responder/ifp/ifpsrv_util.c
+index 5866d30d8a5845c21f5b05fc5de150162eba747e..643881515fb4805ae93ba56c3bca9d1da7796319 100644
+--- a/src/responder/ifp/ifpsrv_util.c
++++ b/src/responder/ifp/ifpsrv_util.c
+@@ -29,7 +29,7 @@
+ #define IFP_USER_DEFAULT_ATTRS {SYSDB_NAME, SYSDB_UIDNUM,   \
+                                 SYSDB_GIDNUM, SYSDB_GECOS,  \
+                                 SYSDB_HOMEDIR, SYSDB_SHELL, \
+-                                "groups", \
++                                "groups", "domain", "domainname", \
+                                 NULL}
+ 
+ errno_t ifp_req_create(struct sbus_request *dbus_req,
+@@ -100,6 +100,78 @@ int ifp_req_create_handle_failure(struct sbus_request *dbus_req, errno_t err)
+                                             "Cannot create IFP request\n"));
+ }
+ 
++errno_t ifp_add_value_to_dict(DBusMessageIter *iter_dict,
++                              const char *key,
++                              const char *value)
++{
++    DBusMessageIter iter_dict_entry;
++    DBusMessageIter iter_dict_val;
++    DBusMessageIter iter_array;
++    dbus_bool_t dbret;
++
++    if (value == NULL || key == NULL) {
++        return EINVAL;
++    }
++
++    dbret = dbus_message_iter_open_container(iter_dict,
++                                             DBUS_TYPE_DICT_ENTRY, NULL,
++                                             &iter_dict_entry);
++    if (!dbret) {
++        return ENOMEM;
++    }
++
++    /* Start by appending the key */
++    dbret = dbus_message_iter_append_basic(&iter_dict_entry,
++                                           DBUS_TYPE_STRING, &key);
++    if (!dbret) {
++        return ENOMEM;
++    }
++
++    dbret = dbus_message_iter_open_container(&iter_dict_entry,
++                                             DBUS_TYPE_VARIANT,
++                                             DBUS_TYPE_ARRAY_AS_STRING
++                                             DBUS_TYPE_STRING_AS_STRING,
++                                             &iter_dict_val);
++    if (!dbret) {
++        return ENOMEM;
++    }
++
++    /* Open container for values */
++    dbret = dbus_message_iter_open_container(&iter_dict_val,
++                                 DBUS_TYPE_ARRAY, DBUS_TYPE_STRING_AS_STRING,
++                                 &iter_array);
++    if (!dbret) {
++        return ENOMEM;
++    }
++
++    dbret = dbus_message_iter_append_basic(&iter_array,
++                                           DBUS_TYPE_STRING,
++                                           &value);
++    if (!dbret) {
++        return ENOMEM;
++    }
++
++    dbret = dbus_message_iter_close_container(&iter_dict_val,
++                                              &iter_array);
++    if (!dbret) {
++        return ENOMEM;
++    }
++
++    dbret = dbus_message_iter_close_container(&iter_dict_entry,
++                                              &iter_dict_val);
++    if (!dbret) {
++        return ENOMEM;
++    }
++
++    dbret = dbus_message_iter_close_container(iter_dict,
++                                              &iter_dict_entry);
++    if (!dbret) {
++        return ENOMEM;
++    }
++
++    return EOK;
++}
++
+ errno_t ifp_add_ldb_el_to_dict(DBusMessageIter *iter_dict,
+                                struct ldb_message_element *el)
+ {
+diff --git a/src/tests/cmocka/test_ifp.c b/src/tests/cmocka/test_ifp.c
+index 21c5475d1c74cd8325815653166bef194ea84f7b..45f718341222c6803a65130741590e10e7aded84 100644
+--- a/src/tests/cmocka/test_ifp.c
++++ b/src/tests/cmocka/test_ifp.c
+@@ -269,7 +269,7 @@ void test_attr_acl(void **state)
+     const char *exp_defaults[] = { SYSDB_NAME, SYSDB_UIDNUM,
+                                    SYSDB_GIDNUM, SYSDB_GECOS,
+                                    SYSDB_HOMEDIR, SYSDB_SHELL,
+-                                   "groups", NULL };
++                                   "groups", "domain", "domainname", NULL };
+     attr_parse_test(exp_defaults, NULL);
+ 
+     /* Test adding some attributes to the defaults */
+@@ -277,13 +277,14 @@ void test_attr_acl(void **state)
+                               SYSDB_NAME, SYSDB_UIDNUM,
+                               SYSDB_GIDNUM, SYSDB_GECOS,
+                               SYSDB_HOMEDIR, SYSDB_SHELL,
+-                              "groups", NULL };
++                              "groups", "domain", "domainname", NULL };
+     attr_parse_test(exp_add, "+telephoneNumber, +streetAddress");
+ 
+     /* Test removing some attributes to the defaults */
+     const char *exp_rm[] = { SYSDB_NAME,
+                              SYSDB_GIDNUM, SYSDB_GECOS,
+                              SYSDB_HOMEDIR, "groups",
++                             "domain", "domainname",
+                              NULL };
+     attr_parse_test(exp_rm, "-"SYSDB_SHELL ",-"SYSDB_UIDNUM);
+ 
+@@ -292,6 +293,7 @@ void test_attr_acl(void **state)
+                                  SYSDB_NAME, SYSDB_UIDNUM,
+                                  SYSDB_GIDNUM, SYSDB_GECOS,
+                                  SYSDB_HOMEDIR, "groups",
++                                 "domain", "domainname",
+                                  NULL };
+     attr_parse_test(exp_add_rm, "+telephoneNumber, -"SYSDB_SHELL);
+ 
+@@ -299,7 +301,8 @@ void test_attr_acl(void **state)
+     const char *exp_add_rm_override[] = { SYSDB_NAME, SYSDB_UIDNUM,
+                                           SYSDB_GIDNUM, SYSDB_GECOS,
+                                           SYSDB_HOMEDIR, SYSDB_SHELL,
+-                                          "groups", NULL };
++                                          "groups", "domain",
++                                          "domainname", NULL };
+     attr_parse_test(exp_add_rm_override,
+                     "+telephoneNumber, -telephoneNumber, +telephoneNumber");
+ 
+@@ -307,7 +310,8 @@ void test_attr_acl(void **state)
+     const char *rm_all[] = { NULL };
+     attr_parse_test(rm_all,  "-"SYSDB_NAME ", -"SYSDB_UIDNUM
+                              ", -"SYSDB_GIDNUM ", -"SYSDB_GECOS
+-                             ", -"SYSDB_HOMEDIR ", -"SYSDB_SHELL", -groups");
++                             ", -"SYSDB_HOMEDIR ", -"SYSDB_SHELL", -groups, "
++                             "-domain, -domainname");
+ 
+     /* Malformed list */
+     attr_parse_test(NULL,  "missing_plus_or_minus");
+-- 
+2.9.4
+

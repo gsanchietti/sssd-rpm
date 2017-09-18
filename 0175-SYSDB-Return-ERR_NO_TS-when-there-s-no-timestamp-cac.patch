@@ -1,0 +1,76 @@
+From 10b75d84300726e5e311b0488352b891f106d631 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Fabiano=20Fid=C3=AAncio?= <fidencio@redhat.com>
+Date: Wed, 24 May 2017 00:35:23 +0200
+Subject: [PATCH 175/181] SYSDB: Return ERR_NO_TS when there's no timestamp
+ cache present
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This change affects sysdb_search_ts_{users,groups} functions and is
+mainly needed in order to avoid breaking our current tests due to the
+changes planned for fixing https://pagure.io/SSSD/sssd/issue/3369.
+
+Related:
+https://pagure.io/SSSD/sssd/issue/3369
+
+Signed-off-by: Fabiano Fidêncio <fidencio@redhat.com>
+
+Reviewed-by: Jakub Hrozek <jhrozek@redhat.com>
+(cherry picked from commit 01c6bb9b47401f9f14c4cfe5c5f03fce2e63629b)
+---
+ src/db/sysdb_ops.c    | 4 ++--
+ src/db/sysdb_search.c | 8 ++++++++
+ 2 files changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/src/db/sysdb_ops.c b/src/db/sysdb_ops.c
+index 4d7b2abd8026c90aaf4e7be687102e459cf3690e..12f8095d2edc60ffab09c92d64f968892c577bbf 100644
+--- a/src/db/sysdb_ops.c
++++ b/src/db/sysdb_ops.c
+@@ -3520,7 +3520,7 @@ int sysdb_search_ts_users(TALLOC_CTX *mem_ctx,
+     ZERO_STRUCT(*res);
+ 
+     if (domain->sysdb->ldb_ts == NULL) {
+-        return ENOENT;
++        return ERR_NO_TS;
+     }
+ 
+     ret = sysdb_cache_search_users(mem_ctx, domain, domain->sysdb->ldb_ts,
+@@ -3737,7 +3737,7 @@ int sysdb_search_ts_groups(TALLOC_CTX *mem_ctx,
+     ZERO_STRUCT(*res);
+ 
+     if (domain->sysdb->ldb_ts == NULL) {
+-        return ENOENT;
++        return ERR_NO_TS;
+     }
+ 
+     ret = sysdb_cache_search_groups(mem_ctx, domain, domain->sysdb->ldb_ts,
+diff --git a/src/db/sysdb_search.c b/src/db/sysdb_search.c
+index 474bc08f0b2fe3b0289cbea96fbf2619ced271e7..6b4b51383d89788052ab7e4b572e86abba5330db 100644
+--- a/src/db/sysdb_search.c
++++ b/src/db/sysdb_search.c
+@@ -587,6 +587,10 @@ int sysdb_enumpwent_filter(TALLOC_CTX *mem_ctx,
+     ret = sysdb_search_ts_users(tmp_ctx, domain, ts_filter,
+                                 sysdb_ts_cache_attrs,
+                                 &ts_res);
++    if (ret == ERR_NO_TS) {
++        ret = ENOENT;
++    }
++
+     if (ret != EOK && ret != ENOENT) {
+         goto done;
+     }
+@@ -1088,6 +1092,10 @@ int sysdb_enumgrent_filter(TALLOC_CTX *mem_ctx,
+     ret = sysdb_search_ts_groups(tmp_ctx, domain, ts_filter,
+                                  sysdb_ts_cache_attrs,
+                                  &ts_res);
++    if (ret == ERR_NO_TS) {
++        ret = ENOENT;
++    }
++
+     if (ret != EOK && ret != ENOENT) {
+         goto done;
+     }
+-- 
+2.9.4
+

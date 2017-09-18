@@ -1,0 +1,40 @@
+From 04ef28b7cc49a71209551646b3a82518506f40a6 Mon Sep 17 00:00:00 2001
+From: Sumit Bose <sbose@redhat.com>
+Date: Mon, 22 May 2017 14:58:01 +0200
+Subject: [PATCH 133/135] cache_req: use the right negative cache for
+ initgroups by upn
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Reviewed-by: Fabiano Fidêncio <fidencio@redhat.com>
+(cherry picked from commit 870b58a6cc6b5cf92a6503c1578e5c21617c8d40)
+---
+ src/responder/common/cache_req/plugins/cache_req_initgroups_by_upn.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/responder/common/cache_req/plugins/cache_req_initgroups_by_upn.c b/src/responder/common/cache_req/plugins/cache_req_initgroups_by_upn.c
+index b6fb43ee02d2f041fb3d992b375ae65a02db8b03..dfb21ac1a0090a3ef9029b38f5b1e8bdda3440c6 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_initgroups_by_upn.c
++++ b/src/responder/common/cache_req/plugins/cache_req_initgroups_by_upn.c
+@@ -66,7 +66,7 @@ cache_req_initgroups_by_upn_ncache_check(struct sss_nc_ctx *ncache,
+                                          struct sss_domain_info *domain,
+                                          struct cache_req_data *data)
+ {
+-    return sss_ncache_check_user(ncache, domain, data->name.lookup);
++    return sss_ncache_check_upn(ncache, domain, data->name.lookup);
+ }
+ 
+ static errno_t
+@@ -74,7 +74,7 @@ cache_req_initgroups_by_upn_ncache_add(struct sss_nc_ctx *ncache,
+                                        struct sss_domain_info *domain,
+                                        struct cache_req_data *data)
+ {
+-    return sss_ncache_set_user(ncache, false, domain, data->name.lookup);
++    return sss_ncache_set_upn(ncache, false, domain, data->name.lookup);
+ }
+ 
+ static errno_t
+-- 
+2.9.3
+

@@ -1,0 +1,48 @@
+From 39864f9ce41ce892fe3cafb769584173299f49f7 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Michal=20=C5=BDidek?= <mzidek@redhat.com>
+Date: Tue, 4 Apr 2017 19:07:12 +0200
+Subject: [PATCH 144/152] VALIDATORS: Remove application section domain
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Application domains can use the same options as normal domains section
+with one more additional option.
+
+We could either duplicate all options from the domain section also in
+the application domain section + add the one additional option or
+add this one option to the domain section even though it is not meant
+to be used there to avoid duplication of all domain options in the
+rule for application section.
+
+It would be could to enhance the validators in libini to allow
+something like 'include' section in order to avoid this issue
+in the future.
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/3356
+
+Reviewed-by: Lukáš Slebodník <lslebodn@redhat.com>
+---
+ src/config/cfg_rules.ini | 5 +----
+ 1 file changed, 1 insertion(+), 4 deletions(-)
+
+diff --git a/src/config/cfg_rules.ini b/src/config/cfg_rules.ini
+index 4b30e8fc43b50844023e7fffa607a59530a302f0..a30fe57e262716abeb2d2af9c3add326122ee4ca 100644
+--- a/src/config/cfg_rules.ini
++++ b/src/config/cfg_rules.ini
+@@ -694,10 +694,7 @@ option = ldap_user_uid_number
+ option = ldap_user_uuid
+ option = ldap_use_tokengroups
+ 
+-[rule/allowed_application_options]
+-validator = ini_allowed_options
+-section_re = ^application/.*$
+-
++# For application domains
+ option = inherit_from
+ 
+ [rule/allowed_subdomain_options]
+-- 
+2.9.4
+

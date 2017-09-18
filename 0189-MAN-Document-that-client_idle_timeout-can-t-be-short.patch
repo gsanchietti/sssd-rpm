@@ -1,0 +1,36 @@
+From 0442102b2e5c6f1bc331ca2078baff8a7b4a50cb Mon Sep 17 00:00:00 2001
+From: Jakub Hrozek <jhrozek@redhat.com>
+Date: Thu, 20 Jul 2017 10:10:58 +0200
+Subject: [PATCH 189/190] MAN: Document that client_idle_timeout can't be
+ shorter than 10 seconds
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+To ensure the client timeout is not too low and clients do not reconnect
+too often, the client_idle_timeout is forced to be 10 seconds minimum.
+
+Reviewed-by: Lukáš Slebodník <lslebodn@redhat.com>
+Reviewed-by: Fabiano Fidêncio <fidencio@redhat.com>
+---
+ src/man/sssd.conf.5.xml | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/src/man/sssd.conf.5.xml b/src/man/sssd.conf.5.xml
+index a35f2807eac8bb89d6cb1dd0a48f738d71a7578f..89729575c724622af817f1c05a94d4ae8f1ece2d 100644
+--- a/src/man/sssd.conf.5.xml
++++ b/src/man/sssd.conf.5.xml
+@@ -621,7 +621,9 @@
+                             a client of an SSSD process can hold onto a file
+                             descriptor without communicating on it. This value
+                             is limited in order to avoid resource exhaustion
+-                            on the system.
++                            on the system. The timeout can't be shorter than
++                            10 seconds. If a lower value is configured, it
++                            will be adjusted to 10 seconds.
+                         </para>
+                         <para>
+                             Default: 60
+-- 
+2.9.4
+

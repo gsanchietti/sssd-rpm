@@ -1,0 +1,34 @@
+From eb3f60eacc6279a6bd97eff7d7be0cc081a7bf9a Mon Sep 17 00:00:00 2001
+From: Lukas Slebodnik <lslebodn@redhat.com>
+Date: Thu, 8 Jun 2017 12:32:44 +0200
+Subject: [PATCH 170/171] cache_req: Do not use default_domain_suffix with
+ netgroups
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/3428
+
+Reviewed-by: Pavel Březina <pbrezina@redhat.com>
+(cherry picked from commit c83e265bbb5b2f2aa4f0067263753c8403c383f9)
+---
+ src/responder/common/cache_req/plugins/cache_req_netgroup_by_name.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/responder/common/cache_req/plugins/cache_req_netgroup_by_name.c b/src/responder/common/cache_req/plugins/cache_req_netgroup_by_name.c
+index 4d8bb18579a286042b00528190dadd52fdd7c75c..ef0775d0b8eac4d679450f436d8427cff9c04582 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_netgroup_by_name.c
++++ b/src/responder/common/cache_req/plugins/cache_req_netgroup_by_name.c
+@@ -112,7 +112,7 @@ const struct cache_req_plugin cache_req_netgroup_by_name = {
+     .name = "Netgroup by name",
+     .attr_expiration = SYSDB_CACHE_EXPIRE,
+     .parse_name = true,
+-    .ignore_default_domain = false,
++    .ignore_default_domain = true,
+     .bypass_cache = false,
+     .only_one_result = true,
+     .search_all_domains = false,
+-- 
+2.9.4
+

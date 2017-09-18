@@ -1,0 +1,322 @@
+From da437bb72fc6ab072fc9b3e6d6809bac323de1e2 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Fabiano=20Fid=C3=AAncio?= <fidencio@redhat.com>
+Date: Tue, 25 Apr 2017 14:14:05 +0200
+Subject: [PATCH 124/127] CACHE_REQ: Add a new cache_req_ncache_filter_fn()
+ plugin function
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This function will be responsible for filtering out all the results that
+we have that are also present in the negative cache.
+
+This is useful mainly for plugins which don't use name as an input token
+but can still be affected by filter_{users,groups} options.
+
+For now this new function is not being used anywhere.
+
+Related:
+https://pagure.io/SSSD/sssd/issue/3362
+
+Signed-off-by: Fabiano Fidêncio <fidencio@redhat.com>
+
+Reviewed-by: Pavel Březina <pbrezina@redhat.com>
+(cherry picked from commit f24ee5cca4cd43e7edf26fec453fbd99392bbe4b)
+---
+ src/responder/common/cache_req/cache_req_plugin.h           | 13 +++++++++++++
+ .../common/cache_req/plugins/cache_req_enum_groups.c        |  1 +
+ src/responder/common/cache_req/plugins/cache_req_enum_svc.c |  1 +
+ .../common/cache_req/plugins/cache_req_enum_users.c         |  1 +
+ .../common/cache_req/plugins/cache_req_group_by_filter.c    |  1 +
+ .../common/cache_req/plugins/cache_req_group_by_id.c        |  1 +
+ .../common/cache_req/plugins/cache_req_group_by_name.c      |  1 +
+ .../common/cache_req/plugins/cache_req_host_by_name.c       |  1 +
+ .../common/cache_req/plugins/cache_req_initgroups_by_name.c |  1 +
+ .../common/cache_req/plugins/cache_req_initgroups_by_upn.c  |  1 +
+ .../common/cache_req/plugins/cache_req_netgroup_by_name.c   |  1 +
+ .../common/cache_req/plugins/cache_req_object_by_id.c       |  1 +
+ .../common/cache_req/plugins/cache_req_object_by_name.c     |  1 +
+ .../common/cache_req/plugins/cache_req_object_by_sid.c      |  1 +
+ .../common/cache_req/plugins/cache_req_svc_by_name.c        |  1 +
+ .../common/cache_req/plugins/cache_req_svc_by_port.c        |  1 +
+ .../common/cache_req/plugins/cache_req_user_by_cert.c       |  1 +
+ .../common/cache_req/plugins/cache_req_user_by_filter.c     |  1 +
+ .../common/cache_req/plugins/cache_req_user_by_id.c         |  1 +
+ .../common/cache_req/plugins/cache_req_user_by_name.c       |  1 +
+ .../common/cache_req/plugins/cache_req_user_by_upn.c        |  1 +
+ 21 files changed, 33 insertions(+)
+
+diff --git a/src/responder/common/cache_req/cache_req_plugin.h b/src/responder/common/cache_req/cache_req_plugin.h
+index e0b619528f6aa31a10a5b48c3c5acc96de90caa1..8117325506b2951c3966fa50506ed0d55273ee81 100644
+--- a/src/responder/common/cache_req/cache_req_plugin.h
++++ b/src/responder/common/cache_req/cache_req_plugin.h
+@@ -93,6 +93,18 @@ typedef errno_t
+                            struct cache_req_data *data);
+ 
+ /**
++ * Filter the result through the negative cache.
++ *
++ * This is useful for plugins which don't use name as an input
++ * token but can be affected by filter_users and filter_groups
++ * options.
++ */
++typedef errno_t
++(*cache_req_ncache_filter_fn)(struct sss_nc_ctx *ncache,
++                              struct sss_domain_info *domain,
++                              const char *name);
++
++/**
+  * Add an object into global negative cache.
+  *
+  * @return EOK If everything went fine.
+@@ -207,6 +219,7 @@ struct cache_req_plugin {
+     cache_req_global_ncache_add_fn global_ncache_add_fn;
+     cache_req_ncache_check_fn ncache_check_fn;
+     cache_req_ncache_add_fn ncache_add_fn;
++    cache_req_ncache_filter_fn ncache_filter_fn;
+     cache_req_lookup_fn lookup_fn;
+     cache_req_dp_send_fn dp_send_fn;
+     cache_req_dp_recv_fn dp_recv_fn;
+diff --git a/src/responder/common/cache_req/plugins/cache_req_enum_groups.c b/src/responder/common/cache_req/plugins/cache_req_enum_groups.c
+index 49ce3508e678862e4389657187b9659ce90fbd1c..11ce9e90ff28f77078b025a44593a44be8f1f5c5 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_enum_groups.c
++++ b/src/responder/common/cache_req/plugins/cache_req_enum_groups.c
+@@ -75,6 +75,7 @@ const struct cache_req_plugin cache_req_enum_groups = {
+     .global_ncache_add_fn = NULL,
+     .ncache_check_fn = NULL,
+     .ncache_add_fn = NULL,
++    .ncache_filter_fn = NULL,
+     .lookup_fn = cache_req_enum_groups_lookup,
+     .dp_send_fn = cache_req_enum_groups_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_enum_svc.c b/src/responder/common/cache_req/plugins/cache_req_enum_svc.c
+index 499b994738d62707b4e86d5a8383e3e2b82e8c57..72b2f1a7d2d2e02ce1a995098d1f26003444bddb 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_enum_svc.c
++++ b/src/responder/common/cache_req/plugins/cache_req_enum_svc.c
+@@ -76,6 +76,7 @@ const struct cache_req_plugin cache_req_enum_svc = {
+     .global_ncache_add_fn = NULL,
+     .ncache_check_fn = NULL,
+     .ncache_add_fn = NULL,
++    .ncache_filter_fn = NULL,
+     .lookup_fn = cache_req_enum_svc_lookup,
+     .dp_send_fn = cache_req_enum_svc_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_enum_users.c b/src/responder/common/cache_req/plugins/cache_req_enum_users.c
+index b635354be6e9d2e2e2af1a6f867ac68e6cf7f085..e0647a0102d9568abdcebfbf0fb99fc2624d5565 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_enum_users.c
++++ b/src/responder/common/cache_req/plugins/cache_req_enum_users.c
+@@ -75,6 +75,7 @@ const struct cache_req_plugin cache_req_enum_users = {
+     .global_ncache_add_fn = NULL,
+     .ncache_check_fn = NULL,
+     .ncache_add_fn = NULL,
++    .ncache_filter_fn = NULL,
+     .lookup_fn = cache_req_enum_users_lookup,
+     .dp_send_fn = cache_req_enum_users_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_group_by_filter.c b/src/responder/common/cache_req/plugins/cache_req_group_by_filter.c
+index 4377a476c36e5e03c8533bc62335b84fa1cee3ff..aa89953b88313605041cce599999fc5bbc741525 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_group_by_filter.c
++++ b/src/responder/common/cache_req/plugins/cache_req_group_by_filter.c
+@@ -131,6 +131,7 @@ const struct cache_req_plugin cache_req_group_by_filter = {
+     .global_ncache_add_fn = NULL,
+     .ncache_check_fn = NULL,
+     .ncache_add_fn = NULL,
++    .ncache_filter_fn = NULL,
+     .lookup_fn = cache_req_group_by_filter_lookup,
+     .dp_send_fn = cache_req_group_by_filter_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_group_by_id.c b/src/responder/common/cache_req/plugins/cache_req_group_by_id.c
+index ad5b7d890a42f29b586ab8e0943fef3dfab1162d..5613bf67c6acd1b2ace00cf75221462f45ef6743 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_group_by_id.c
++++ b/src/responder/common/cache_req/plugins/cache_req_group_by_id.c
+@@ -144,6 +144,7 @@ const struct cache_req_plugin cache_req_group_by_id = {
+     .global_ncache_add_fn = cache_req_group_by_id_global_ncache_add,
+     .ncache_check_fn = cache_req_group_by_id_ncache_check,
+     .ncache_add_fn = NULL,
++    .ncache_filter_fn = NULL,
+     .lookup_fn = cache_req_group_by_id_lookup,
+     .dp_send_fn = cache_req_group_by_id_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_group_by_name.c b/src/responder/common/cache_req/plugins/cache_req_group_by_name.c
+index de1e8f9442273acf386a2278b06f28ee63a7e3c6..7706051818590af77da75d3e4c7f671c89170f82 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_group_by_name.c
++++ b/src/responder/common/cache_req/plugins/cache_req_group_by_name.c
+@@ -194,6 +194,7 @@ const struct cache_req_plugin cache_req_group_by_name = {
+     .global_ncache_add_fn = NULL,
+     .ncache_check_fn = cache_req_group_by_name_ncache_check,
+     .ncache_add_fn = cache_req_group_by_name_ncache_add,
++    .ncache_filter_fn = NULL,
+     .lookup_fn = cache_req_group_by_name_lookup,
+     .dp_send_fn = cache_req_group_by_name_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_host_by_name.c b/src/responder/common/cache_req/plugins/cache_req_host_by_name.c
+index 1171cd63fac5cc1d36b31bf8a069f059705cae90..9cb32f6b18327873ba4b96fa177e8295be461db0 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_host_by_name.c
++++ b/src/responder/common/cache_req/plugins/cache_req_host_by_name.c
+@@ -92,6 +92,7 @@ const struct cache_req_plugin cache_req_host_by_name = {
+     .global_ncache_add_fn = NULL,
+     .ncache_check_fn = NULL,
+     .ncache_add_fn = NULL,
++    .ncache_filter_fn = NULL,
+     .lookup_fn = cache_req_host_by_name_lookup,
+     .dp_send_fn = cache_req_host_by_name_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_initgroups_by_name.c b/src/responder/common/cache_req/plugins/cache_req_initgroups_by_name.c
+index f100aefe5c92279cde7e3209c7f48f5e2b35f135..75ac44e1ad36238f01342eced9188d07daa50720 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_initgroups_by_name.c
++++ b/src/responder/common/cache_req/plugins/cache_req_initgroups_by_name.c
+@@ -209,6 +209,7 @@ const struct cache_req_plugin cache_req_initgroups_by_name = {
+     .global_ncache_add_fn = NULL,
+     .ncache_check_fn = cache_req_initgroups_by_name_ncache_check,
+     .ncache_add_fn = cache_req_initgroups_by_name_ncache_add,
++    .ncache_filter_fn = NULL,
+     .lookup_fn = cache_req_initgroups_by_name_lookup,
+     .dp_send_fn = cache_req_initgroups_by_name_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_initgroups_by_upn.c b/src/responder/common/cache_req/plugins/cache_req_initgroups_by_upn.c
+index 266ec7b8a28d496d9603bd9b6cdfef268ffa8559..b6fb43ee02d2f041fb3d992b375ae65a02db8b03 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_initgroups_by_upn.c
++++ b/src/responder/common/cache_req/plugins/cache_req_initgroups_by_upn.c
+@@ -120,6 +120,7 @@ const struct cache_req_plugin cache_req_initgroups_by_upn = {
+     .global_ncache_add_fn = NULL,
+     .ncache_check_fn = cache_req_initgroups_by_upn_ncache_check,
+     .ncache_add_fn = cache_req_initgroups_by_upn_ncache_add,
++    .ncache_filter_fn = NULL,
+     .lookup_fn = cache_req_initgroups_by_upn_lookup,
+     .dp_send_fn = cache_req_initgroups_by_upn_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_netgroup_by_name.c b/src/responder/common/cache_req/plugins/cache_req_netgroup_by_name.c
+index ab3e553d3ecb8ae09094dcfc938ed0ac01925327..4d8bb18579a286042b00528190dadd52fdd7c75c 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_netgroup_by_name.c
++++ b/src/responder/common/cache_req/plugins/cache_req_netgroup_by_name.c
+@@ -128,6 +128,7 @@ const struct cache_req_plugin cache_req_netgroup_by_name = {
+     .global_ncache_add_fn = NULL,
+     .ncache_check_fn = cache_req_netgroup_by_name_ncache_check,
+     .ncache_add_fn = cache_req_netgroup_by_name_ncache_add,
++    .ncache_filter_fn = NULL,
+     .lookup_fn = cache_req_netgroup_by_name_lookup,
+     .dp_send_fn = cache_req_netgroup_by_name_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_object_by_id.c b/src/responder/common/cache_req/plugins/cache_req_object_by_id.c
+index 9557bd15270b2eb1a0671f9ef91033efac29c3ac..ff3d0e67862be365c56ab24396b4982e8addded0 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_object_by_id.c
++++ b/src/responder/common/cache_req/plugins/cache_req_object_by_id.c
+@@ -111,6 +111,7 @@ const struct cache_req_plugin cache_req_object_by_id = {
+     .global_ncache_add_fn = cache_req_object_by_id_global_ncache_add,
+     .ncache_check_fn = cache_req_object_by_id_ncache_check,
+     .ncache_add_fn = NULL,
++    .ncache_filter_fn = NULL,
+     .lookup_fn = cache_req_object_by_id_lookup,
+     .dp_send_fn = cache_req_object_by_id_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_object_by_name.c b/src/responder/common/cache_req/plugins/cache_req_object_by_name.c
+index e236d1fa4aadcd87b192d34ebaf5f9ad8908b6c2..854d0b83c420ebebcb5e0e079c707081fa313632 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_object_by_name.c
++++ b/src/responder/common/cache_req/plugins/cache_req_object_by_name.c
+@@ -204,6 +204,7 @@ const struct cache_req_plugin cache_req_object_by_name = {
+     .global_ncache_add_fn = NULL,
+     .ncache_check_fn = cache_req_object_by_name_ncache_check,
+     .ncache_add_fn = cache_req_object_by_name_ncache_add,
++    .ncache_filter_fn = NULL,
+     .lookup_fn = cache_req_object_by_name_lookup,
+     .dp_send_fn = cache_req_object_by_name_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_object_by_sid.c b/src/responder/common/cache_req/plugins/cache_req_object_by_sid.c
+index dfec79da07d669165205a767cab22c2254686134..039a79df7bb1ab213ce4334835e9fc18e6d0faac 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_object_by_sid.c
++++ b/src/responder/common/cache_req/plugins/cache_req_object_by_sid.c
+@@ -120,6 +120,7 @@ const struct cache_req_plugin cache_req_object_by_sid = {
+     .global_ncache_add_fn = cache_req_object_by_sid_global_ncache_add,
+     .ncache_check_fn = cache_req_object_by_sid_ncache_check,
+     .ncache_add_fn = NULL,
++    .ncache_filter_fn = NULL,
+     .lookup_fn = cache_req_object_by_sid_lookup,
+     .dp_send_fn = cache_req_object_by_sid_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_svc_by_name.c b/src/responder/common/cache_req/plugins/cache_req_svc_by_name.c
+index b2bfb26ffed1a60ed8389fa89b0e728c8c6cf76c..4c32d9977cc06e43eed3a90e7dcf107e91efefb5 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_svc_by_name.c
++++ b/src/responder/common/cache_req/plugins/cache_req_svc_by_name.c
+@@ -152,6 +152,7 @@ const struct cache_req_plugin cache_req_svc_by_name = {
+     .global_ncache_add_fn = NULL,
+     .ncache_check_fn = cache_req_svc_by_name_ncache_check,
+     .ncache_add_fn = cache_req_svc_by_name_ncache_add,
++    .ncache_filter_fn = NULL,
+     .lookup_fn = cache_req_svc_by_name_lookup,
+     .dp_send_fn = cache_req_svc_by_name_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_svc_by_port.c b/src/responder/common/cache_req/plugins/cache_req_svc_by_port.c
+index 0e48437f4b64d26112be88af1eebc20f012b70fd..1e998f642c766d15d3f6fe777aa5c789629508e2 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_svc_by_port.c
++++ b/src/responder/common/cache_req/plugins/cache_req_svc_by_port.c
+@@ -125,6 +125,7 @@ const struct cache_req_plugin cache_req_svc_by_port = {
+     .global_ncache_add_fn = NULL,
+     .ncache_check_fn = cache_req_svc_by_port_ncache_check,
+     .ncache_add_fn = cache_req_svc_by_port_ncache_add,
++    .ncache_filter_fn = NULL,
+     .lookup_fn = cache_req_svc_by_port_lookup,
+     .dp_send_fn = cache_req_svc_by_port_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_user_by_cert.c b/src/responder/common/cache_req/plugins/cache_req_user_by_cert.c
+index 286a34db276e0098060982c572e2a68ceceebf60..7a0c7d8ce1644f1c41b64c6903e4e20eb3c2c081 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_user_by_cert.c
++++ b/src/responder/common/cache_req/plugins/cache_req_user_by_cert.c
+@@ -94,6 +94,7 @@ const struct cache_req_plugin cache_req_user_by_cert = {
+     .global_ncache_add_fn = cache_req_user_by_cert_global_ncache_add,
+     .ncache_check_fn = cache_req_user_by_cert_ncache_check,
+     .ncache_add_fn = NULL,
++    .ncache_filter_fn = NULL,
+     .lookup_fn = cache_req_user_by_cert_lookup,
+     .dp_send_fn = cache_req_user_by_cert_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_user_by_filter.c b/src/responder/common/cache_req/plugins/cache_req_user_by_filter.c
+index c476814373cd784bf8dbbea1da7b010afe5bb4e4..dd3f42e855389ecc73690e4d18c4977253b108a6 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_user_by_filter.c
++++ b/src/responder/common/cache_req/plugins/cache_req_user_by_filter.c
+@@ -131,6 +131,7 @@ const struct cache_req_plugin cache_req_user_by_filter = {
+     .global_ncache_add_fn = NULL,
+     .ncache_check_fn = NULL,
+     .ncache_add_fn = NULL,
++    .ncache_filter_fn = NULL,
+     .lookup_fn = cache_req_user_by_filter_lookup,
+     .dp_send_fn = cache_req_user_by_filter_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_user_by_id.c b/src/responder/common/cache_req/plugins/cache_req_user_by_id.c
+index 9ba73292e5dc518e86c6e00e7e493d6871f28e70..b14b3738aa7721723f524ebd46301a3a9a1c712f 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_user_by_id.c
++++ b/src/responder/common/cache_req/plugins/cache_req_user_by_id.c
+@@ -144,6 +144,7 @@ const struct cache_req_plugin cache_req_user_by_id = {
+     .global_ncache_add_fn = cache_req_user_by_id_global_ncache_add,
+     .ncache_check_fn = cache_req_user_by_id_ncache_check,
+     .ncache_add_fn = NULL,
++    .ncache_filter_fn = NULL,
+     .lookup_fn = cache_req_user_by_id_lookup,
+     .dp_send_fn = cache_req_user_by_id_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_user_by_name.c b/src/responder/common/cache_req/plugins/cache_req_user_by_name.c
+index 15da7d0d20b1ac97511a226daecc8ef7e7d2e7e4..2e49de938d0af50089d0cf49860441c2b6ea679c 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_user_by_name.c
++++ b/src/responder/common/cache_req/plugins/cache_req_user_by_name.c
+@@ -199,6 +199,7 @@ const struct cache_req_plugin cache_req_user_by_name = {
+     .global_ncache_add_fn = NULL,
+     .ncache_check_fn = cache_req_user_by_name_ncache_check,
+     .ncache_add_fn = cache_req_user_by_name_ncache_add,
++    .ncache_filter_fn = NULL,
+     .lookup_fn = cache_req_user_by_name_lookup,
+     .dp_send_fn = cache_req_user_by_name_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_user_by_upn.c b/src/responder/common/cache_req/plugins/cache_req_user_by_upn.c
+index 40a097b1634d2b2d089b7feb377ea2389a58672c..b8bcd241ed79c510aca214ad3788215ae2997d20 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_user_by_upn.c
++++ b/src/responder/common/cache_req/plugins/cache_req_user_by_upn.c
+@@ -125,6 +125,7 @@ const struct cache_req_plugin cache_req_user_by_upn = {
+     .global_ncache_add_fn = NULL,
+     .ncache_check_fn = cache_req_user_by_upn_ncache_check,
+     .ncache_add_fn = cache_req_user_by_upn_ncache_add,
++    .ncache_filter_fn = NULL,
+     .lookup_fn = cache_req_user_by_upn_lookup,
+     .dp_send_fn = cache_req_user_by_upn_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+-- 
+2.9.3
+

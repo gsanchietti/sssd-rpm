@@ -1,0 +1,48 @@
+From b96c69f0ab0ecd55b734c167763c3bfe2357c448 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Fabiano=20Fid=C3=AAncio?= <fidencio@redhat.com>
+Date: Wed, 7 Jun 2017 15:17:15 +0200
+Subject: [PATCH 181/181] LDAP_ID_CLEANUP: Use sysdb_search_*_by_timestamp()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Use the appropriate methods for searching users and groups bv timestamp.
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/3369
+
+Signed-off-by: Fabiano Fidêncio <fidencio@redhat.com>
+
+Reviewed-by: Jakub Hrozek <jhrozek@redhat.com>
+(cherry picked from commit 05e579691b51ac2f81ab0c828ff6fe57bd86a8b6)
+---
+ src/providers/ldap/ldap_id_cleanup.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/src/providers/ldap/ldap_id_cleanup.c b/src/providers/ldap/ldap_id_cleanup.c
+index cde2ad81873d46edd5e05c4a701ea1742a012bd0..c85ce45918cf938a95ff85c31bfe0541f9ddd052 100644
+--- a/src/providers/ldap/ldap_id_cleanup.c
++++ b/src/providers/ldap/ldap_id_cleanup.c
+@@ -219,7 +219,8 @@ static int cleanup_users(struct sdap_options *opts,
+         goto done;
+     }
+ 
+-    ret = sysdb_search_users(tmpctx, dom, subfilter, attrs, &count, &msgs);
++    ret = sysdb_search_users_by_timestamp(tmpctx, dom, subfilter, attrs,
++                                          &count, &msgs);
+     if (ret == ENOENT) {
+         count = 0;
+     } else if (ret != EOK) {
+@@ -394,7 +395,8 @@ static int cleanup_groups(TALLOC_CTX *memctx,
+         goto done;
+     }
+ 
+-    ret = sysdb_search_groups(tmpctx, domain, subfilter, attrs, &count, &msgs);
++    ret = sysdb_search_groups_by_timestamp(tmpctx, domain, subfilter, attrs,
++                                           &count, &msgs);
+     if (ret == ENOENT) {
+         count = 0;
+     } else if (ret != EOK) {
+-- 
+2.9.4
+

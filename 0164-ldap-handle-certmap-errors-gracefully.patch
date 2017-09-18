@@ -1,0 +1,56 @@
+From 85b74b966ec1d417ce76b05cbf3351b20c0981b2 Mon Sep 17 00:00:00 2001
+From: Sumit Bose <sbose@redhat.com>
+Date: Wed, 17 May 2017 15:43:25 +0200
+Subject: [PATCH 164/166] ldap: handle certmap errors gracefully
+
+Currently the LDAP user lookup request errors out if e.g. there is no
+matching rule for a certificate. This might cause the related domain to
+go offline.
+
+With this patch the request returns that no user was found for the given
+certificate but overall result is that the request finishes
+successfully.
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/3405
+
+Reviewed-by: Jakub Hrozek <jhrozek@redhat.com>
+---
+ src/providers/ldap/ldap_id.c | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/src/providers/ldap/ldap_id.c b/src/providers/ldap/ldap_id.c
+index 7400dc1f57e30cc6ae5f939ffa628a1e9dd47e06..557712e8dc2b2bde664b4054fa2f8eb39df84d73 100644
+--- a/src/providers/ldap/ldap_id.c
++++ b/src/providers/ldap/ldap_id.c
+@@ -258,6 +258,27 @@ struct tevent_req *users_get_send(TALLOC_CTX *memctx,
+         if (ret != EOK) {
+             DEBUG(SSSDBG_OP_FAILURE,
+                   "sss_cert_derb64_to_ldap_filter failed.\n");
++
++            /* Typically sss_cert_derb64_to_ldap_filter() will fail if there
++             * is no mapping rule matching the current certificate. But this
++             * just means that no matching user can be found so we can finish
++             * the request with this result. Even if
++             * sss_cert_derb64_to_ldap_filter() would fail for other reason
++             * there is no need to return an error which might cause the
++             * domain go offline. */
++
++            if (noexist_delete) {
++                ret = sysdb_remove_cert(state->domain, filter_value);
++                if (ret != EOK) {
++                    DEBUG(SSSDBG_OP_FAILURE,
++                          "Ignoring error while removing user certificate "
++                          "[%d]: %s\n", ret, sss_strerror(ret));
++                }
++            }
++
++            ret = EOK;
++            state->sdap_ret = ENOENT;
++            state->dp_error = DP_ERR_OK;
+             goto done;
+         }
+ 
+-- 
+2.9.4
+

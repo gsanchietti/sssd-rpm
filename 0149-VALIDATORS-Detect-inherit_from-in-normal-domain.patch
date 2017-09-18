@@ -1,0 +1,154 @@
+From b94b578fac8f94d42fd6fb691438d2dbe5248309 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Michal=20=C5=BDidek?= <mzidek@redhat.com>
+Date: Wed, 31 May 2017 14:21:02 +0200
+Subject: [PATCH 149/152] VALIDATORS: Detect inherit_from in normal domain
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This patch adds new sssd specific validator. In the future we
+can add more checks in it, but currently it only checks if
+the option inherit_from is used on normal domain and reports
+error if it is.
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/3356
+
+Reviewed-by: Lukáš Slebodník <lslebodn@redhat.com>
+---
+ src/config/cfg_rules.ini             |  3 ++
+ src/tests/cmocka/test_config_check.c | 22 +++++++++++++++
+ src/util/sss_ini.c                   | 53 +++++++++++++++++++++++++++++++++++-
+ 3 files changed, 77 insertions(+), 1 deletion(-)
+
+diff --git a/src/config/cfg_rules.ini b/src/config/cfg_rules.ini
+index 2c8c0cb98ed039c374c827775798f61369c1521e..744446478e5d5489cd86d8e15ce8e178cf5e3a91 100644
+--- a/src/config/cfg_rules.ini
++++ b/src/config/cfg_rules.ini
+@@ -711,3 +711,6 @@ option = ad_server
+ option = ad_backup_server
+ option = ad_site
+ option = use_fully_qualified_names
++
++[rule/sssd_checks]
++validator = sssd_checks
+diff --git a/src/tests/cmocka/test_config_check.c b/src/tests/cmocka/test_config_check.c
+index 8fc0b01f3ef3fe03152efd979a3e96c21ba567cc..bab3226c004fb9495471af7c7d3f6861552d8a86 100644
+--- a/src/tests/cmocka/test_config_check.c
++++ b/src/tests/cmocka/test_config_check.c
+@@ -217,6 +217,27 @@ void config_check_test_good_sections(void **state)
+     config_check_test_common(cfg_str, 0, expected_errors);
+ }
+ 
++void config_check_test_inherit_from_in_normal_dom(void **state)
++{
++    char cfg_str[] = "[domain/A.test]\n"
++                     "inherit_from = domain\n";
++    const char *expected_errors[] = {
++        "[rule/sssd_checks]: Attribute 'inherit_from' is not allowed in "
++        "section 'domain/A.test'. Check for typos.",
++    };
++
++    config_check_test_common(cfg_str, 1, expected_errors);
++}
++
++void config_check_test_inherit_from_in_app_dom(void **state)
++{
++    char cfg_str[] = "[application/A.test]\n"
++                     "inherit_from = domain\n";
++    const char *expected_errors[] = { NULL };
++
++    config_check_test_common(cfg_str, 0, expected_errors);
++}
++
+ int main(int argc, const char *argv[])
+ {
+     poptContext pc;
+@@ -235,6 +256,7 @@ int main(int argc, const char *argv[])
+         cmocka_unit_test(config_check_test_bad_pac_option_name),
+         cmocka_unit_test(config_check_test_bad_ifp_option_name),
+         cmocka_unit_test(config_check_test_good_sections),
++        cmocka_unit_test(config_check_test_inherit_from_in_normal_dom),
+     };
+ 
+     /* Set debug level to invalid value so we can decide if -d 0 was used. */
+diff --git a/src/util/sss_ini.c b/src/util/sss_ini.c
+index e56006c05555d6e0c5e726e83771abce5a72b139..175a4cfaba7ea964aee174e928d5e3c1e81de638 100644
+--- a/src/util/sss_ini.c
++++ b/src/util/sss_ini.c
+@@ -561,12 +561,63 @@ error:
+ }
+ 
+ #ifdef HAVE_LIBINI_CONFIG_V1_3
++/* Here we can put custom SSSD specific checks that can not be implemented
++ * using libini validators */
++static int custom_sssd_checks(const char *rule_name,
++                              struct ini_cfgobj *rules_obj,
++                              struct ini_cfgobj *config_obj,
++                              struct ini_errobj *errobj,
++                              void **data)
++{
++    char **cfg_sections = NULL;
++    int num_cfg_sections;
++    struct value_obj *vo = NULL;
++    char dom_prefix[] = "domain/";
++    int ret;
++
++    /* Get all sections in configuration */
++    cfg_sections = ini_get_section_list(config_obj, &num_cfg_sections, &ret);
++    if (ret != EOK) {
++        goto done;
++    }
++
++    /* Check if a normal domain section (not application domains) has option
++     * inherit_from and report error if it does */
++    for (int i = 0; i < num_cfg_sections; i++) {
++        if (strncmp(dom_prefix, cfg_sections[i], strlen(dom_prefix)) == 0) {
++            ret = ini_get_config_valueobj(cfg_sections[i],
++                                          "inherit_from",
++                                          config_obj,
++                                          INI_GET_NEXT_VALUE,
++                                          &vo);
++            if (vo != NULL) {
++                ret = ini_errobj_add_msg(errobj,
++                                         "Attribute 'inherit_from' is not "
++                                         "allowed in section '%s'. Check for "
++                                         "typos.",
++                                         cfg_sections[i]);
++                if (ret != EOK) {
++                    goto done;
++                }
++            }
++        }
++    }
++
++    ret = EOK;
++done:
++    ini_free_section_list(cfg_sections);
++    return EOK;
++}
++
+ static int sss_ini_call_validators_errobj(struct sss_ini_initdata *data,
+                                           const char *rules_path,
+                                           struct ini_errobj *errobj)
+ {
+     int ret;
+     struct ini_cfgobj *rules_cfgobj = NULL;
++    struct ini_validator custom_sssd = { "sssd_checks", custom_sssd_checks,
++                                         NULL };
++    struct ini_validator *sss_validators[] = { &custom_sssd, NULL };
+ 
+     ret = ini_rules_read_from_file(rules_path, &rules_cfgobj);
+     if (ret != EOK) {
+@@ -575,7 +626,7 @@ static int sss_ini_call_validators_errobj(struct sss_ini_initdata *data,
+         goto done;
+     }
+ 
+-    ret = ini_rules_check(rules_cfgobj, data->sssd_config, NULL, errobj);
++    ret = ini_rules_check(rules_cfgobj, data->sssd_config, sss_validators, errobj);
+     if (ret != EOK) {
+         DEBUG(SSSDBG_FATAL_FAILURE,
+               "ini_rules_check failed %d [%s]\n", ret, strerror(ret));
+-- 
+2.9.4
+

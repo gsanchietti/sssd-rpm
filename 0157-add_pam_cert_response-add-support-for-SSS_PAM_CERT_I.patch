@@ -1,0 +1,104 @@
+From c5c6ba2546d350a7a01a9f44bb5df9c6652a1e06 Mon Sep 17 00:00:00 2001
+From: Sumit Bose <sbose@redhat.com>
+Date: Mon, 8 May 2017 16:02:36 +0200
+Subject: [PATCH 157/160] add_pam_cert_response: add support for
+ SSS_PAM_CERT_INFO_WITH_HINT
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Related to https://pagure.io/SSSD/sssd/issue/3395
+
+Reviewed-by: Fabiano Fidêncio <fidencio@redhat.com>
+(cherry picked from commit 6073cfc40747cd6d3142f0f98b880fc390dd7aad)
+---
+ src/responder/pam/pamsrv.h     |  2 +-
+ src/responder/pam/pamsrv_cmd.c |  3 ++-
+ src/responder/pam/pamsrv_p11.c | 21 +++++++++++++++------
+ 3 files changed, 18 insertions(+), 8 deletions(-)
+
+diff --git a/src/responder/pam/pamsrv.h b/src/responder/pam/pamsrv.h
+index b569748fe2a2005cee5df34bef55e803175492a9..57a37b72594f030995f5e22255eb7a8fcd63d10e 100644
+--- a/src/responder/pam/pamsrv.h
++++ b/src/responder/pam/pamsrv.h
+@@ -101,7 +101,7 @@ errno_t pam_check_cert_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
+ 
+ errno_t add_pam_cert_response(struct pam_data *pd, const char *user,
+                               const char *token_name, const char *module_name,
+-                              const char *key_id);
++                              const char *key_id, enum response_type type);
+ 
+ bool may_do_cert_auth(struct pam_ctx *pctx, struct pam_data *pd);
+ 
+diff --git a/src/responder/pam/pamsrv_cmd.c b/src/responder/pam/pamsrv_cmd.c
+index 36dba37964b71153435b4df5d5328de4361926e6..080cfafa709d63542fbf57d26fab11f0a367dea7 100644
+--- a/src/responder/pam/pamsrv_cmd.c
++++ b/src/responder/pam/pamsrv_cmd.c
+@@ -1846,7 +1846,8 @@ static void pam_dom_forwarder(struct pam_auth_req *preq)
+                     ret = add_pam_cert_response(preq->pd, cert_user,
+                                                 preq->token_name,
+                                                 preq->module_name,
+-                                                preq->key_id);
++                                                preq->key_id,
++                                                SSS_PAM_CERT_INFO);
+                     if (ret != EOK) {
+                         DEBUG(SSSDBG_OP_FAILURE, "add_pam_cert_response failed.\n");
+                         preq->pd->pam_status = PAM_AUTHINFO_UNAVAIL;
+diff --git a/src/responder/pam/pamsrv_p11.c b/src/responder/pam/pamsrv_p11.c
+index 365300b9075983b603a6f9e91ba6f8f21706388f..4dce43800c3c6b026c545df35c846269cbb49610 100644
+--- a/src/responder/pam/pamsrv_p11.c
++++ b/src/responder/pam/pamsrv_p11.c
+@@ -580,7 +580,7 @@ errno_t pam_check_cert_recv(struct tevent_req *req, TALLOC_CTX *mem_ctx,
+ 
+ errno_t add_pam_cert_response(struct pam_data *pd, const char *sysdb_username,
+                               const char *token_name, const char *module_name,
+-                              const char *key_id)
++                              const char *key_id, enum response_type type)
+ {
+     uint8_t *msg = NULL;
+     char *env = NULL;
+@@ -590,14 +590,23 @@ errno_t add_pam_cert_response(struct pam_data *pd, const char *sysdb_username,
+     size_t module_len;
+     size_t key_id_len;
+     int ret;
++    const char *username = "";
+ 
+-    if (sysdb_username == NULL || token_name == NULL || module_name == NULL
+-            || key_id == NULL) {
++    if (type != SSS_PAM_CERT_INFO && type != SSS_PAM_CERT_INFO_WITH_HINT) {
++        DEBUG(SSSDBG_CRIT_FAILURE, "Invalid response type [%d].\n", type);
++        return EINVAL;
++    }
++
++    if ((type == SSS_PAM_CERT_INFO && sysdb_username == NULL)
++            || token_name == NULL || module_name == NULL || key_id == NULL) {
+         DEBUG(SSSDBG_CRIT_FAILURE, "Missing mandatory user or slot name.\n");
+         return EINVAL;
+     }
+ 
+-    user_len = strlen(sysdb_username) + 1;
++    if (sysdb_username != NULL) {
++        username = sysdb_username;
++    }
++    user_len = strlen(username) + 1;
+     slot_len = strlen(token_name) + 1;
+     module_len = strlen(module_name) + 1;
+     key_id_len = strlen(key_id) + 1;
+@@ -616,12 +625,12 @@ errno_t add_pam_cert_response(struct pam_data *pd, const char *sysdb_username,
+      * re_expression config option was set in a way that user@domain cannot be
+      * handled anymore some more logic has to be added here. But for the time
+      * being I think using sysdb_username is fine. */
+-    memcpy(msg, sysdb_username, user_len);
++    memcpy(msg, username, user_len);
+     memcpy(msg + user_len, token_name, slot_len);
+     memcpy(msg + user_len + slot_len, module_name, module_len);
+     memcpy(msg + user_len + slot_len + module_len, key_id, key_id_len);
+ 
+-    ret = pam_add_response(pd, SSS_PAM_CERT_INFO, msg_len, msg);
++    ret = pam_add_response(pd, type, msg_len, msg);
+     talloc_free(msg);
+     if (ret != EOK) {
+         DEBUG(SSSDBG_OP_FAILURE,
+-- 
+2.9.4
+

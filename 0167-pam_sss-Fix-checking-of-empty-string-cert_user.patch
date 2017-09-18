@@ -1,0 +1,52 @@
+From 1ac8b82addfa0a4c94321d5cb72b7991755e61f8 Mon Sep 17 00:00:00 2001
+From: Lukas Slebodnik <lslebodn@redhat.com>
+Date: Fri, 2 Jun 2017 11:56:55 +0200
+Subject: [PATCH 167/169] pam_sss: Fix checking of empty string cert_user
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+src/sss_client/pam_sss.c: In function ‘eval_response’:
+src/sss_client/pam_sss.c:998:64: error: comparison between pointer and zero character constant [-Werror=pointer-compare]
+                 if (type == SSS_PAM_CERT_INFO && pi->cert_user == '\0') {
+                                                                ^~
+src/sss_client/pam_sss.c:998:50: note: did you mean to dereference the pointer?
+                 if (type == SSS_PAM_CERT_INFO && pi->cert_user == '\0') {
+                                                  ^
+src/sss_client/pam_sss.c:1010:42: error: comparison between pointer and zero character constant [-Werror=pointer-compare]
+                         && pi->cert_user != '\0') {
+                                          ^~
+src/sss_client/pam_sss.c:1010:28: note: did you mean to dereference the pointer?
+                         && pi->cert_user != '\0') {
+
+Reviewed-by: Fabiano Fidêncio <fidencio@redhat.com>
+(cherry picked from commit c62dc2ac02253e130991db0f6acd60ce1a2753f1)
+---
+ src/sss_client/pam_sss.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/sss_client/pam_sss.c b/src/sss_client/pam_sss.c
+index 1c06079967e3d9076d537c3de8aba93e13f76d09..9732459e6fb7ce01c9445c423cf0a583ca36e036 100644
+--- a/src/sss_client/pam_sss.c
++++ b/src/sss_client/pam_sss.c
+@@ -995,7 +995,7 @@ static int eval_response(pam_handle_t *pamh, size_t buflen, uint8_t *buf,
+                     break;
+                 }
+ 
+-                if (type == SSS_PAM_CERT_INFO && pi->cert_user == '\0') {
++                if (type == SSS_PAM_CERT_INFO && *pi->cert_user == '\0') {
+                     D(("Invalid CERT message"));
+                     break;
+                 }
+@@ -1007,7 +1007,7 @@ static int eval_response(pam_handle_t *pamh, size_t buflen, uint8_t *buf,
+                 }
+ 
+                 if ((pi->pam_user == NULL || *(pi->pam_user) == '\0')
+-                        && pi->cert_user != '\0') {
++                        && *pi->cert_user != '\0') {
+                     ret = pam_set_item(pamh, PAM_USER, pi->cert_user);
+                     if (ret != PAM_SUCCESS) {
+                         D(("Failed to set PAM_USER during "
+-- 
+2.9.4
+

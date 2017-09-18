@@ -1,0 +1,38 @@
+From 55e8b436443cfae1c3b2155be7325d53760f7271 Mon Sep 17 00:00:00 2001
+From: Sumit Bose <sbose@redhat.com>
+Date: Thu, 20 Jul 2017 20:01:14 +0200
+Subject: [PATCH 190/190] ad_account_can_shortcut: shortcut if ID is unknown
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+If sss_idmap_unix_to_sid() returns an error we can assume that the given
+POSIX ID is not from the current domain and can be skipped. This is e.g.
+the case in the IPA provider if a POSIX ID used in the IPA domain is
+checked in a trusted id-mapped AD domain before the IPA domain is
+checked.
+
+Resolves https://pagure.io/SSSD/sssd/issue/3452
+
+Reviewed-by: Lukáš Slebodník <lslebodn@redhat.com>
+Reviewed-by: Jakub Hrozek <jhrozek@redhat.com>
+---
+ src/providers/ad/ad_id.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/providers/ad/ad_id.c b/src/providers/ad/ad_id.c
+index d1f6c444f5ddbcbbac6ff7f41fb6c8bf9ca976cb..e14ada386f16851a65097952c85e57b7acda14aa 100644
+--- a/src/providers/ad/ad_id.c
++++ b/src/providers/ad/ad_id.c
+@@ -86,6 +86,8 @@ static bool ad_account_can_shortcut(struct sdap_idmap_ctx *idmap_ctx,
+         if (err != IDMAP_SUCCESS) {
+             DEBUG(SSSDBG_MINOR_FAILURE, "Mapping ID [%s] to SID failed: "
+                   "[%s]\n", filter_value, idmap_error_string(err));
++            /* assume id is from a different domain */
++            shortcut = true;
+             goto done;
+         }
+         /* fall through */
+-- 
+2.9.4
+

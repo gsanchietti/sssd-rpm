@@ -1,0 +1,278 @@
+From 11c34233ac7385c6f2a65c5cc57dfefb1cae48cd Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Fabiano=20Fid=C3=AAncio?= <fidencio@redhat.com>
+Date: Wed, 7 Jun 2017 15:07:10 +0200
+Subject: [PATCH 180/181] SYSDB: Introduce
+ _search_{users,groups}_by_timestamp()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+These new two sysdb methods are going to be used, at least for now,
+uniquely and exclusively in the cleanup task.
+
+The reason for adding those is that during the cleanup task a timestamp
+search is done in the persistent cache, which doesn't have the updated
+timestamps, returning then a wrong result that ends up in having all the
+users being removed from the cache.
+
+The persistent cache doesn't have its entries' timestamps updated
+because those are kept updated in the timestamp cache, therefore these
+new two methods end up doing:
+- if the timestamp cache is present:
+  - search for the entries solely in the timestamp cache;
+  - get the needed attributes from these entries from the persistent
+    cache;
+- otherwise:
+  - search for the entries in the persistent cache;
+  - merge its results with timestamp cache's results;
+
+Related:
+https://pagure.io/SSSD/sssd/issue/3369
+
+Signed-off-by: Fabiano Fidêncio <fidencio@redhat.com>
+
+Reviewed-by: Jakub Hrozek <jhrozek@redhat.com>
+(cherry picked from commit 41708e1e500e7cada3d3e606aa2b8b9869a5c734)
+---
+ src/db/sysdb.h     |  14 +++++
+ src/db/sysdb_ops.c | 178 +++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 192 insertions(+)
+
+diff --git a/src/db/sysdb.h b/src/db/sysdb.h
+index 62c561be9452a284a8ddf8ebb45720265852c8b0..21d6cf4fc90a050e203e1609be5ee267a618dda9 100644
+--- a/src/db/sysdb.h
++++ b/src/db/sysdb.h
+@@ -1142,6 +1142,13 @@ int sysdb_search_users(TALLOC_CTX *mem_ctx,
+                        size_t *msgs_count,
+                        struct ldb_message ***msgs);
+ 
++int sysdb_search_users_by_timestamp(TALLOC_CTX *mem_ctx,
++                                    struct sss_domain_info *domain,
++                                    const char *sub_filter,
++                                    const char **attrs,
++                                    size_t *_msgs_count,
++                                    struct ldb_message ***_msgs);
++
+ int sysdb_delete_user(struct sss_domain_info *domain,
+                       const char *name, uid_t uid);
+ 
+@@ -1152,6 +1159,13 @@ int sysdb_search_groups(TALLOC_CTX *mem_ctx,
+                         size_t *msgs_count,
+                         struct ldb_message ***msgs);
+ 
++int sysdb_search_groups_by_timestamp(TALLOC_CTX *mem_ctx,
++                                     struct sss_domain_info *domain,
++                                     const char *sub_filter,
++                                     const char **attrs,
++                                     size_t *_msgs_count,
++                                     struct ldb_message ***_msgs);
++
+ int sysdb_delete_group(struct sss_domain_info *domain,
+                        const char *name, gid_t gid);
+ 
+diff --git a/src/db/sysdb_ops.c b/src/db/sysdb_ops.c
+index ed936f0cb1a37155aabef96db1d267eb03ec0ed9..7ca6575ce75dab7805236c9f48dbf28a2f3946d2 100644
+--- a/src/db/sysdb_ops.c
++++ b/src/db/sysdb_ops.c
+@@ -374,6 +374,58 @@ enum sysdb_obj_type {
+     SYSDB_GROUP
+ };
+ 
++static errno_t cleanup_dn_filter(TALLOC_CTX *mem_ctx,
++                                struct ldb_result *ts_res,
++                                const char *object_class,
++                                const char *filter,
++                                char **_dn_filter)
++{
++    TALLOC_CTX *tmp_ctx;
++    char *dn_filter;
++    errno_t ret;
++
++    if (ts_res->count == 0) {
++        *_dn_filter = NULL;
++        return EOK;
++    }
++
++    tmp_ctx = talloc_new(NULL);
++    if (tmp_ctx == NULL) {
++        return ENOMEM;
++    }
++
++    dn_filter = talloc_asprintf(tmp_ctx, "(&(%s)%s(|", object_class, filter);
++    if (dn_filter == NULL) {
++        ret = ENOMEM;
++        goto done;
++    }
++
++    for (size_t i = 0; i < ts_res->count; i++) {
++        dn_filter = talloc_asprintf_append(
++                                    dn_filter,
++                                    "(%s=%s)",
++                                    SYSDB_DN,
++                                    ldb_dn_get_linearized(ts_res->msgs[i]->dn));
++        if (dn_filter == NULL) {
++            ret = ENOMEM;
++            goto done;
++        }
++    }
++
++    dn_filter = talloc_asprintf_append(dn_filter, "))");
++    if (dn_filter == NULL) {
++        ret = ENOMEM;
++        goto done;
++    }
++
++    *_dn_filter = talloc_steal(mem_ctx, dn_filter);
++    ret = EOK;
++
++done:
++    talloc_zfree(tmp_ctx);
++    return ret;
++}
++
+ static int sysdb_search_by_name(TALLOC_CTX *mem_ctx,
+                                 struct sss_domain_info *domain,
+                                 const char *name,
+@@ -3503,6 +3555,69 @@ int sysdb_search_users(TALLOC_CTX *mem_ctx,
+                                          attrs);
+ }
+ 
++int sysdb_search_users_by_timestamp(TALLOC_CTX *mem_ctx,
++                                    struct sss_domain_info *domain,
++                                    const char *sub_filter,
++                                    const char **attrs,
++                                    size_t *_msgs_count,
++                                    struct ldb_message ***_msgs)
++{
++    TALLOC_CTX *tmp_ctx;
++    struct ldb_result *res;
++    struct ldb_result ts_res;
++    struct ldb_message **msgs;
++    size_t msgs_count;
++    char *dn_filter = NULL;
++    errno_t ret;
++
++    tmp_ctx = talloc_new(NULL);
++    if (tmp_ctx == NULL) {
++        return ENOMEM;
++    }
++
++    ret = sysdb_search_ts_users(tmp_ctx, domain, sub_filter, NULL, &ts_res);
++    if (ret == ERR_NO_TS) {
++        ret = sysdb_cache_search_users(tmp_ctx, domain, domain->sysdb->ldb,
++                                       sub_filter, attrs, &msgs_count, &msgs);
++        if (ret != EOK) {
++            goto done;
++        }
++
++       ret = sysdb_merge_msg_list_ts_attrs(domain->sysdb, msgs_count, msgs, attrs);
++       if (ret != EOK) {
++           goto done;
++       }
++
++       goto immediately;
++    } else if (ret != EOK) {
++        goto done;
++    }
++
++    ret = cleanup_dn_filter(tmp_ctx, &ts_res, SYSDB_UC, sub_filter, &dn_filter);
++    if (ret != EOK) {
++        goto done;
++    }
++
++    ret = sysdb_search_ts_matches(tmp_ctx, domain->sysdb, attrs,
++                                  &ts_res, dn_filter, &res);
++    if (ret != EOK) {
++        goto done;
++    }
++
++    msgs_count = res->count;
++    msgs = res->msgs;
++
++immediately:
++    *_msgs_count = msgs_count;
++    *_msgs = talloc_steal(mem_ctx, msgs);
++
++    ret = EOK;
++
++done:
++    talloc_free(tmp_ctx);
++    return ret;
++}
++
+ int sysdb_search_ts_users(TALLOC_CTX *mem_ctx,
+                           struct sss_domain_info *domain,
+                           const char *sub_filter,
+@@ -3720,6 +3835,69 @@ int sysdb_search_groups(TALLOC_CTX *mem_ctx,
+                                          attrs);
+ }
+ 
++int sysdb_search_groups_by_timestamp(TALLOC_CTX *mem_ctx,
++                                     struct sss_domain_info *domain,
++                                     const char *sub_filter,
++                                     const char **attrs,
++                                     size_t *_msgs_count,
++                                     struct ldb_message ***_msgs)
++{
++    TALLOC_CTX *tmp_ctx;
++    struct ldb_result *res;
++    struct ldb_result ts_res;
++    struct ldb_message **msgs;
++    size_t msgs_count;
++    char *dn_filter = NULL;
++    errno_t ret;
++
++    tmp_ctx = talloc_new(NULL);
++    if (tmp_ctx == NULL) {
++        return ENOMEM;
++    }
++
++    ret = sysdb_search_ts_groups(tmp_ctx, domain, sub_filter, NULL, &ts_res);
++    if (ret == ERR_NO_TS) {
++        ret = sysdb_cache_search_groups(tmp_ctx, domain, domain->sysdb->ldb,
++                                        sub_filter, attrs, &msgs_count, &msgs);
++        if (ret != EOK) {
++            goto done;
++        }
++
++       ret = sysdb_merge_msg_list_ts_attrs(domain->sysdb, msgs_count, msgs, attrs);
++       if (ret != EOK) {
++           goto done;
++       }
++
++       goto immediately;
++    } else if (ret != EOK) {
++        goto done;
++    }
++
++    ret = cleanup_dn_filter(tmp_ctx, &ts_res, SYSDB_GC, sub_filter, &dn_filter);
++    if (ret != EOK) {
++        goto done;
++    }
++
++    ret = sysdb_search_ts_matches(tmp_ctx, domain->sysdb, attrs,
++                                  &ts_res, dn_filter, &res);
++    if (ret != EOK) {
++        goto done;
++    }
++
++    msgs_count = res->count;
++    msgs = res->msgs;
++
++immediately:
++    *_msgs_count = msgs_count;
++    *_msgs = talloc_steal(mem_ctx, msgs);
++
++    ret = EOK;
++
++done:
++    talloc_free(tmp_ctx);
++    return ret;
++}
++
+ int sysdb_search_ts_groups(TALLOC_CTX *mem_ctx,
+                            struct sss_domain_info *domain,
+                            const char *sub_filter,
+-- 
+2.9.4
+

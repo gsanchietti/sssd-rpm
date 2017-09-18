@@ -1,0 +1,61 @@
+From 79f389eb400eddc133824b079f8bd49ced24643b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Fabiano=20Fid=C3=AAncio?= <fidencio@redhat.com>
+Date: Wed, 17 May 2017 14:43:39 +0200
+Subject: [PATCH 169/169] CACHE_REQ_SEARCH: Check for filtered users/groups
+ also on cache_req_send()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+cache_req_send() may take some shortcuts in case the object is found in
+the cache and it's still valid.
+
+This behaviour may lead to exposing filtered users and groups when
+they're searched by their uid/gid.
+
+A solution for this issue was proposed on 4ef0b19a but, unfortunately,
+didn't take into consideration that this shortcut could be taken.
+
+There are basically two really easy ways to test this issue:
+ 1) Using enumeration:
+    - Set "enumerate = True" in the domain section
+    - restart SSSD cleaning up the cache;
+    - getent passwd <uid of a user who is part of the filter_users>
+    - Wait a little bit till the entry_negative_timeout is expired
+    - getent passwd <same uid used above>
+
+ 2) Not using enumeration:
+   - getent passwd <uid of a user who is part of the filter_users>
+   - Wait a little bit till the entry_negative_timeout is expired
+   - getent passwd <same uid used above>
+
+A test covering this code path will be added in the follow-up commit.
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/3362
+
+Signed-off-by: Fabiano Fidêncio <fidencio@redhat.com>
+Reviewed-by: Pavel Březina <pbrezina@redhat.com>
+(cherry picked from commit 4c09cd008967c5c0ec358dc658ffc6fc1cef2697)
+---
+ src/responder/common/cache_req/cache_req_search.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/responder/common/cache_req/cache_req_search.c b/src/responder/common/cache_req/cache_req_search.c
+index d3aaa7542ddfd28716fbf9cdcedfeadb649dbaa0..56d0345cd8f98de574961d3c9628ae7a4c24f9be 100644
+--- a/src/responder/common/cache_req/cache_req_search.c
++++ b/src/responder/common/cache_req/cache_req_search.c
+@@ -334,6 +334,10 @@ cache_req_search_send(TALLOC_CTX *mem_ctx,
+ 
+ done:
+     if (ret == EOK) {
++        ret = cache_req_search_ncache_filter(state, cr, &state->result);
++    }
++
++    if (ret == EOK) {
+         tevent_req_done(req);
+     } else {
+         tevent_req_error(req, ret);
+-- 
+2.9.4
+

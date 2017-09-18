@@ -1,0 +1,47 @@
+From 428909abd59f1eb8bb02b6627f37f61af3de2691 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Fabiano=20Fid=C3=AAncio?= <fidencio@redhat.com>
+Date: Mon, 1 May 2017 14:49:50 +0200
+Subject: [PATCH 120/120] LDAP/AD: Do not fail in case
+ rfc2307bis_nested_groups_recv() returns ENOENT
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Commit 25699846 introduced a regression seen when an initgroup lookup is
+done and there's no nested groups involved.
+
+In this scenario the whole lookup fails due to an ENOENT returned by
+rfc2307bis_nested_groups_recv(), which leads to the user removal from
+sysdb causing some authentication issues.
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/3331
+
+Signed-off-by: Fabiano Fidêncio <fidencio@redhat.com>
+Reviewed-by: Sumit Bose <sbose@redhat.com>
+---
+ src/providers/ldap/sdap_async_initgroups_ad.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/src/providers/ldap/sdap_async_initgroups_ad.c b/src/providers/ldap/sdap_async_initgroups_ad.c
+index f75b9211e2a06616dbf9b948e60b023a818c7e19..2831be9776293260aeec0e2ff85160f1938bdb32 100644
+--- a/src/providers/ldap/sdap_async_initgroups_ad.c
++++ b/src/providers/ldap/sdap_async_initgroups_ad.c
+@@ -1746,7 +1746,13 @@ static void sdap_ad_get_domain_local_groups_done(struct tevent_req *subreq)
+ 
+     ret = rfc2307bis_nested_groups_recv(subreq);
+     talloc_zfree(subreq);
+-    if (ret != EOK) {
++    if (ret == ENOENT) {
++        /* In case of ENOENT we can just proceed without making
++         * sdap_get_initgr_user() fail because there's no nested
++         * groups for this user/group. */
++        ret = EOK;
++        goto done;
++    } else if (ret != EOK) {
+         tevent_req_error(req, ret);
+         return;
+     }
+-- 
+2.9.3
+

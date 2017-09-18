@@ -1,0 +1,163 @@
+From b6ba8bc43a0b5a448e4cd30bc406bd08c389e365 Mon Sep 17 00:00:00 2001
+From: Sumit Bose <sbose@redhat.com>
+Date: Fri, 12 May 2017 10:40:21 +0200
+Subject: [PATCH 135/135] pam: properly support UPN logon names
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Many logon applications like /bin/login or sshd canonicalize the user
+name before they call pam_start() and hence the UPN is not seen by
+SSSD's pam responder. But some like e.g. gdm don't and authentication
+might fail if a UPN is used.
+
+The reason is that currently the already parsed short name of the user
+was used in the cache_req and hence the cache_req was not able to fall
+back to the UPN lookup code. This patch uses the name originally
+provided by the user as input to allow the fallback to the UPN lookup.
+
+Resolves https://pagure.io/SSSD/sssd/issue/3240
+
+Reviewed-by: Fabiano Fidêncio <fidencio@redhat.com>
+(cherry picked from commit 29d063505c07127f7747405b1a61d8f782673645)
+---
+ src/responder/pam/pamsrv_cmd.c  |  4 +--
+ src/tests/cmocka/test_pam_srv.c | 79 ++++++++++++++++++++++++++++++++++++++++-
+ 2 files changed, 80 insertions(+), 3 deletions(-)
+
+diff --git a/src/responder/pam/pamsrv_cmd.c b/src/responder/pam/pamsrv_cmd.c
+index 10a178f839ec011c09a6da4575efbb026f3f7700..36dba37964b71153435b4df5d5328de4361926e6 100644
+--- a/src/responder/pam/pamsrv_cmd.c
++++ b/src/responder/pam/pamsrv_cmd.c
+@@ -1560,7 +1560,7 @@ static int pam_check_user_search(struct pam_auth_req *preq)
+ 
+     data = cache_req_data_name(preq,
+                                CACHE_REQ_INITGROUPS,
+-                               preq->pd->user);
++                               preq->pd->logon_name);
+     if (data == NULL) {
+         return ENOMEM;
+     }
+@@ -1589,7 +1589,7 @@ static int pam_check_user_search(struct pam_auth_req *preq)
+                            preq->cctx->rctx->ncache,
+                            0,
+                            preq->req_dom_type,
+-                           preq->pd->domain,
++                           NULL,
+                            data);
+     if (!dpreq) {
+         DEBUG(SSSDBG_CRIT_FAILURE,
+diff --git a/src/tests/cmocka/test_pam_srv.c b/src/tests/cmocka/test_pam_srv.c
+index d249b8f1ea48f1c17b461c3add9e8c63774e5f88..4d351a3707d2a49604595b728fff7705560c871a 100644
+--- a/src/tests/cmocka/test_pam_srv.c
++++ b/src/tests/cmocka/test_pam_srv.c
+@@ -518,6 +518,8 @@ static void mock_input_pam_ex(TALLOC_CTX *mem_ctx,
+     int ret;
+     size_t needed_size;
+     uint8_t *authtok;
++    char *s_name;
++    char *dom;
+ 
+     if (name != NULL) {
+         pi.pam_user = name;
+@@ -574,7 +576,13 @@ static void mock_input_pam_ex(TALLOC_CTX *mem_ctx,
+     will_return(__wrap_sss_packet_get_body, buf);
+     will_return(__wrap_sss_packet_get_body, buf_size);
+ 
+-    mock_parse_inp(name, NULL, EOK);
++    if (strrchr(name, '@') == NULL) {
++        mock_parse_inp(name, NULL, EOK);
++    } else {
++        ret = sss_parse_internal_fqname(mem_ctx, name, &s_name, &dom);
++        mock_parse_inp(s_name, dom, EOK);
++    }
++
+     if (contact_dp) {
+         mock_account_recv_simple();
+     }
+@@ -1582,6 +1590,71 @@ void test_pam_preauth_no_logon_name(void **state)
+     assert_int_equal(ret, EOK);
+ }
+ 
++void test_pam_auth_no_upn_logon_name(void **state)
++{
++    int ret;
++
++    ret = sysdb_cache_password(pam_test_ctx->tctx->dom,
++                               pam_test_ctx->pam_user_fqdn,
++                               "12345");
++    assert_int_equal(ret, EOK);
++
++    mock_input_pam_ex(pam_test_ctx, "upn@"TEST_DOM_NAME, "12345", NULL, NULL,
++                      true);
++    mock_account_recv_simple();
++
++    will_return(__wrap_sss_packet_get_cmd, SSS_PAM_AUTHENTICATE);
++    will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
++
++    pam_test_ctx->exp_pam_status = PAM_USER_UNKNOWN;
++    set_cmd_cb(test_pam_simple_check);
++    ret = sss_cmd_execute(pam_test_ctx->cctx, SSS_PAM_AUTHENTICATE,
++                          pam_test_ctx->pam_cmds);
++    assert_int_equal(ret, EOK);
++
++    /* Wait until the test finishes with EOK */
++    ret = test_ev_loop(pam_test_ctx->tctx);
++    assert_int_equal(ret, EOK);
++}
++
++void test_pam_auth_upn_logon_name(void **state)
++{
++    int ret;
++    struct sysdb_attrs *attrs;
++
++    ret = sysdb_cache_password(pam_test_ctx->tctx->dom,
++                               pam_test_ctx->pam_user_fqdn,
++                               "12345");
++    assert_int_equal(ret, EOK);
++    attrs = sysdb_new_attrs(pam_test_ctx);
++    assert_non_null(attrs);
++    ret = sysdb_attrs_add_string(attrs, SYSDB_UPN, "upn@"TEST_DOM_NAME);
++    assert_int_equal(ret, EOK);
++
++    ret = sysdb_set_user_attr(pam_test_ctx->tctx->dom,
++                              pam_test_ctx->pam_user_fqdn,
++                              attrs,
++                              LDB_FLAG_MOD_ADD);
++    assert_int_equal(ret, EOK);
++
++    mock_input_pam_ex(pam_test_ctx, "upn@"TEST_DOM_NAME, "12345", NULL, NULL,
++                      true);
++    mock_account_recv_simple();
++
++    will_return(__wrap_sss_packet_get_cmd, SSS_PAM_AUTHENTICATE);
++    will_return(__wrap_sss_packet_get_body, WRAP_CALL_REAL);
++
++    set_cmd_cb(test_pam_successful_offline_auth_check);
++    ret = sss_cmd_execute(pam_test_ctx->cctx, SSS_PAM_AUTHENTICATE,
++                          pam_test_ctx->pam_cmds);
++    assert_int_equal(ret, EOK);
++
++    /* Wait until the test finishes with EOK */
++    ret = test_ev_loop(pam_test_ctx->tctx);
++    assert_int_equal(ret, EOK);
++}
++
++
+ static void set_cert_auth_param(struct pam_ctx *pctx, const char *dbpath)
+ {
+     pam_test_ctx->pctx->cert_auth = true;
+@@ -2312,6 +2385,10 @@ int main(int argc, const char *argv[])
+                                         pam_test_setup, pam_test_teardown),
+         cmocka_unit_test_setup_teardown(test_pam_preauth_no_logon_name,
+                                         pam_test_setup, pam_test_teardown),
++        cmocka_unit_test_setup_teardown(test_pam_auth_no_upn_logon_name,
++                                        pam_test_setup, pam_test_teardown),
++        cmocka_unit_test_setup_teardown(test_pam_auth_upn_logon_name,
++                                        pam_test_setup, pam_test_teardown),
+         cmocka_unit_test_setup_teardown(test_pam_cached_auth_success,
+                                         pam_cached_test_setup,
+                                         pam_test_teardown),
+-- 
+2.9.3
+

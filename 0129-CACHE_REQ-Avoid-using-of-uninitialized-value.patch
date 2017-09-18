@@ -1,0 +1,68 @@
+From 6a1da829eaa1eee3e854f0cadc0b6effff776ab4 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Fabiano=20Fid=C3=AAncio?= <fidencio@redhat.com>
+Date: Mon, 15 May 2017 11:54:00 +0200
+Subject: [PATCH 1/2] CACHE_REQ: Avoid using of uninitialized value
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Commit 4ef0b19a introduced the following warning, as "req" may be used
+without being initialized:
+src/responder/common/cache_req/cache_req_search.c:
+     In function 'cache_req_search_done':
+src/responder/common/cache_req/cache_req_search.c:467:9:
+     error: 'req' may be used uninitialized in this function
+     [-Werror=maybe-uninitialized]
+         tevent_req_error(req, ret);
+         ^
+src/responder/common/cache_req/cache_req_search.c:424:24:
+     note: 'req' was declared here
+     struct tevent_req *req;
+                        ^
+cc1: all warnings being treated as errors
+
+In order to fix the issue above, let's just allocate tmp_ctx after "req"
+is already set.
+
+Related:
+https://pagure.io/SSSD/sssd/issue/3362
+
+Signed-off-by: Fabiano Fidêncio <fidencio@redhat.com>
+Co-Author: Lukáš Slebodník <lslebodn@redhat.com>
+Reviewed-by: Sumit Bose <sbose@redhat.com>
+---
+ src/responder/common/cache_req/cache_req_search.c | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/src/responder/common/cache_req/cache_req_search.c b/src/responder/common/cache_req/cache_req_search.c
+index 793dbc5042ae329b2cade5d1eb5a6d41102e264f..70448a7639bc9f98d380b8edce9d130adfa0ceb2 100644
+--- a/src/responder/common/cache_req/cache_req_search.c
++++ b/src/responder/common/cache_req/cache_req_search.c
+@@ -425,18 +425,18 @@ static void cache_req_search_done(struct tevent_req *subreq)
+     struct ldb_result *result = NULL;
+     errno_t ret;
+ 
+-    tmp_ctx = talloc_new(NULL);
+-    if (tmp_ctx == NULL) {
+-        ret = ENOMEM;
+-        goto done;
+-    }
+-
+     req = tevent_req_callback_data(subreq, struct tevent_req);
+     state = tevent_req_data(req, struct cache_req_search_state);
+ 
+     state->dp_success = state->cr->plugin->dp_recv_fn(subreq, state->cr);
+     talloc_zfree(subreq);
+ 
++    tmp_ctx = talloc_new(NULL);
++    if (tmp_ctx == NULL) {
++        ret = ENOMEM;
++        goto done;
++    }
++
+     /* Get result from cache again. */
+     ret = cache_req_search_cache(tmp_ctx, state->cr, &result);
+     if (ret != EOK) {
+-- 
+2.9.3
+

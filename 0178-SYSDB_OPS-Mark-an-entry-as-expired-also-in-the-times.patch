@@ -1,0 +1,55 @@
+From 891e9c7cb924830334a42864ef2582e545f42723 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Fabiano=20Fid=C3=AAncio?= <fidencio@redhat.com>
+Date: Mon, 29 May 2017 13:32:59 +0200
+Subject: [PATCH 178/181] SYSDB_OPS: Mark an entry as expired also in the
+ timestamp cache
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As the cleanup task will start using new methods for searching the users
+and groups which have to be cleaned up, SSSD starts relying more in a
+more consistent state of the timestamp cache on pretty much everything
+related to the cleanup task.
+
+One of the things that would cause SSSD some problems is not having the
+ghost user expired in the persistent cache but not in the timestamp
+cache.
+
+With this patch, the entry is also expired in the timestamp cache when
+it's present.
+
+Related:
+https://pagure.io/SSSD/sssd/issue/3369
+
+Signed-off-by: Fabiano Fidêncio <fidencio@redhat.com>
+
+Reviewed-by: Jakub Hrozek <jhrozek@redhat.com>
+(cherry picked from commit 9883d1e2913ff0c1db479f1ece8148e03155c7f3)
+---
+ src/db/sysdb_ops.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/src/db/sysdb_ops.c b/src/db/sysdb_ops.c
+index 12f8095d2edc60ffab09c92d64f968892c577bbf..ae26470487f859fe1de1dc364b6a05b9793a0545 100644
+--- a/src/db/sysdb_ops.c
++++ b/src/db/sysdb_ops.c
+@@ -5065,6 +5065,15 @@ errno_t sysdb_mark_entry_as_expired_ldb_dn(struct sss_domain_info *dom,
+         goto done;
+     }
+ 
++    if (dom->sysdb->ldb_ts != NULL) {
++        ret = ldb_modify(dom->sysdb->ldb_ts, msg);
++        if (ret != LDB_SUCCESS) {
++            DEBUG(SSSDBG_MINOR_FAILURE,
++                  "Could not mark an entry as expired in the timestamp cache\n");
++            /* non-fatal */
++        }
++    }
++
+     ret = EOK;
+ 
+ done:
+-- 
+2.9.4
+

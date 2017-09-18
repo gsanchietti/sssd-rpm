@@ -1,0 +1,128 @@
+From 3fc92dcfbd67f82d26d7db46026f1fa1b69e2c70 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Fabiano=20Fid=C3=AAncio?= <fidencio@redhat.com>
+Date: Tue, 20 Jun 2017 14:22:48 +0200
+Subject: [PATCH 184/186] DOMAIN: Add
+ sss_domain_info_{get,set}_output_fqnames()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Let's avoid setting a domain's property directly from cr_domain code.
+
+In order to do so, let's introduce a setter, which may help us in the
+future whenever we decide to make sss_domain_info an opaque structure.
+
+For completeness, a getter has also been introduced and used in the
+usertools code.
+
+Related:
+https://pagure.io/SSSD/sssd/issue/3403
+
+Signed-off-by: Fabiano Fidêncio <fidencio@redhat.com>
+
+Reviewed-by: Jakub Hrozek <jhrozek@redhat.com>
+(cherry picked from commit fa2fc8a2908619031292eaf375eb1a510b8b2eba)
+---
+ src/confdb/confdb.h                               |  5 ++++-
+ src/responder/common/cache_req/cache_req_domain.c |  4 ++--
+ src/util/domain_info_utils.c                      | 11 +++++++++++
+ src/util/usertools.c                              |  2 +-
+ src/util/util.h                                   |  5 +++++
+ 5 files changed, 23 insertions(+), 4 deletions(-)
+
+diff --git a/src/confdb/confdb.h b/src/confdb/confdb.h
+index 32a422155abef428e8a75fc83a5fe14620c7028e..2ba1bc47ee11f699726cefaf7c3335d2a8afee49 100644
+--- a/src/confdb/confdb.h
++++ b/src/confdb/confdb.h
+@@ -291,7 +291,6 @@ struct sss_domain_info {
+     bool enumerate;
+     char **sd_enumerate;
+     bool fqnames;
+-    bool output_fqnames;
+     bool mpg;
+     bool ignore_group_members;
+     uint32_t id_min;
+@@ -355,6 +354,10 @@ struct sss_domain_info {
+ 
+     struct certmap_info **certmaps;
+     bool user_name_hint;
++
++    /* Do not use the _output_fqnames property directly in new code, but rather
++     * use sss_domain_info_{get,set}_output_fqnames(). */
++    bool output_fqnames;
+ };
+ 
+ /**
+diff --git a/src/responder/common/cache_req/cache_req_domain.c b/src/responder/common/cache_req/cache_req_domain.c
+index b5f7f6c2ffabdbd92ee46b3020cee6ef7fec32d8..c2b5abb74f3bd3d5055f29a4523f29b05feb2014 100644
+--- a/src/responder/common/cache_req/cache_req_domain.c
++++ b/src/responder/common/cache_req/cache_req_domain.c
+@@ -140,7 +140,7 @@ cache_req_domain_new_list_from_string_list(TALLOC_CTX *mem_ctx,
+                  * input is allowed by default. However, we really want to use
+                  * the fully qualified name as output in order to avoid
+                  * conflicts whith users who have the very same name. */
+-                cr_domain->domain->output_fqnames = true;
++                sss_domain_info_set_output_fqnames(cr_domain->domain, true);
+ 
+                 DLIST_ADD_END(cr_domains, cr_domain,
+                               struct cache_req_domain *);
+@@ -170,7 +170,7 @@ cache_req_domain_new_list_from_string_list(TALLOC_CTX *mem_ctx,
+          * qualified name as output in order to avoid conflicts whith users
+          * who have the very same name. */
+         if (resolution_order != NULL) {
+-            cr_domain->domain->output_fqnames = true;
++            sss_domain_info_set_output_fqnames(cr_domain->domain, true);
+         }
+ 
+         DLIST_ADD_END(cr_domains, cr_domain, struct cache_req_domain *);
+diff --git a/src/util/domain_info_utils.c b/src/util/domain_info_utils.c
+index 541058a16d585155b3b51511740f7db45281e2fd..45c74f089d0fdeaf6b5b50d7e5058df1716ff777 100644
+--- a/src/util/domain_info_utils.c
++++ b/src/util/domain_info_utils.c
+@@ -904,3 +904,14 @@ const char *sss_domain_type_str(struct sss_domain_info *dom)
+     }
+     return "Unknown";
+ }
++
++void sss_domain_info_set_output_fqnames(struct sss_domain_info *domain,
++                                        bool output_fqnames)
++{
++    domain->output_fqnames = output_fqnames;
++}
++
++bool sss_domain_info_get_output_fqnames(struct sss_domain_info *domain)
++{
++    return domain->output_fqnames;
++}
+diff --git a/src/util/usertools.c b/src/util/usertools.c
+index 83131da1cac25e60a5ec3fffa995a545673e53b9..33f4f7811c843704fff32db3a9ac54b3438f9d37 100644
+--- a/src/util/usertools.c
++++ b/src/util/usertools.c
+@@ -867,7 +867,7 @@ int sss_output_fqname(TALLOC_CTX *mem_ctx,
+         goto done;
+     }
+ 
+-    if (domain->output_fqnames || domain->fqnames) {
++    if (sss_domain_info_get_output_fqnames(domain) || domain->fqnames) {
+         output_name = sss_tc_fqname(tmp_ctx, domain->names,
+                                     domain, output_name);
+         if (output_name == NULL) {
+diff --git a/src/util/util.h b/src/util/util.h
+index 5ba4c36ca88e325c20a3b1ecc8080a11ca276dcf..72d4116e1206e9cc69715edc45bf5b9b91e37e6b 100644
+--- a/src/util/util.h
++++ b/src/util/util.h
+@@ -571,6 +571,11 @@ errno_t sssd_domain_init(TALLOC_CTX *mem_ctx,
+                          const char *db_path,
+                          struct sss_domain_info **_domain);
+ 
++void sss_domain_info_set_output_fqnames(struct sss_domain_info *domain,
++                                        bool output_fqname);
++
++bool sss_domain_info_get_output_fqnames(struct sss_domain_info *domain);
++
+ #define IS_SUBDOMAIN(dom) ((dom)->parent != NULL)
+ 
+ #define DOM_HAS_VIEWS(dom) ((dom)->has_views)
+-- 
+2.9.4
+

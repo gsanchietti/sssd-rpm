@@ -1,0 +1,34 @@
+From 62acd53dc2880b23cfb221ce40537abfb6e011bb Mon Sep 17 00:00:00 2001
+From: Jakub Hrozek <jhrozek@redhat.com>
+Date: Tue, 20 Sep 2016 22:00:27 +0200
+Subject: [PATCH 19/36] UTIL: Add utility macro cli_creds_get_gid()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The KCM responder checks the owneship of the ccache based on both UID
+and GID of the peer. In order to reuse the already existing creds
+structure, let's just add a new macro that returns the GID from the
+creds structure.
+
+Reviewed-by: Michal Židek <mzidek@redhat.com>
+Reviewed-by: Simo Sorce <simo@redhat.com>
+---
+ src/util/util_creds.h | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/util/util_creds.h b/src/util/util_creds.h
+index 65468fa12b8c6921859574c40f5759c936a10e86..936b9965d1ccd2b437d93b38d789b6f8389f47a6 100644
+--- a/src/util/util_creds.h
++++ b/src/util/util_creds.h
+@@ -71,6 +71,7 @@ struct cli_creds {
+ };
+ 
+ #define cli_creds_get_uid(x) x->ucred.uid
++#define cli_creds_get_gid(x) x->ucred.gid
+ 
+ #else /* not HAVE_UCRED */
+ struct cli_creds {
+-- 
+2.9.3
+

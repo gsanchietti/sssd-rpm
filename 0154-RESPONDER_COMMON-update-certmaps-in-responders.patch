@@ -1,0 +1,77 @@
+From d363bd0f829fa7af5f96c2b07b975b7b2c5fdcfa Mon Sep 17 00:00:00 2001
+From: Sumit Bose <sbose@redhat.com>
+Date: Tue, 2 May 2017 15:25:10 +0200
+Subject: [PATCH 154/160] RESPONDER_COMMON: update certmaps in responders
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Make certificate mapping data available to the responders.
+
+Related to https://pagure.io/SSSD/sssd/issue/3395
+
+Reviewed-by: Fabiano Fidêncio <fidencio@redhat.com>
+(cherry picked from commit 749963195393efa3a4f9b168dd02fbcc68976ba3)
+---
+ src/confdb/confdb.h                          |  3 +++
+ src/responder/common/responder_get_domains.c | 23 +++++++++++++++++++++++
+ 2 files changed, 26 insertions(+)
+
+diff --git a/src/confdb/confdb.h b/src/confdb/confdb.h
+index 8719c239362b371fcdb1b78956bcddde871f141b..797353141edcccbf3341d161ca598c99492e54fe 100644
+--- a/src/confdb/confdb.h
++++ b/src/confdb/confdb.h
+@@ -351,6 +351,9 @@ struct sss_domain_info {
+     char *forest;
+     struct sss_domain_info *forest_root;
+     const char **upn_suffixes;
++
++    struct certmap_info **certmaps;
++    bool user_name_hint;
+ };
+ 
+ /**
+diff --git a/src/responder/common/responder_get_domains.c b/src/responder/common/responder_get_domains.c
+index 8c90b7773e248e1dd6d846c5050e1931fc50c786..155631676d9449f69865919e1b74ee9399607c27 100644
+--- a/src/responder/common/responder_get_domains.c
++++ b/src/responder/common/responder_get_domains.c
+@@ -224,6 +224,26 @@ immediately:
+     return req;
+ }
+ 
++static void sss_resp_update_certmaps(struct resp_ctx *rctx)
++{
++    int ret;
++    struct certmap_info **certmaps;
++    bool user_name_hint;
++    struct sss_domain_info *dom;
++
++    for (dom = rctx->domains; dom != NULL; dom = dom->next) {
++        ret = sysdb_get_certmap(dom, dom->sysdb, &certmaps, &user_name_hint);
++        if (ret == EOK) {
++            dom->user_name_hint = user_name_hint;
++            talloc_free(dom->certmaps);
++            dom->certmaps = certmaps;
++        } else {
++            DEBUG(SSSDBG_OP_FAILURE,
++                  "sysdb_get_certmap failed for domain [%s].\n", dom->name);
++        }
++    }
++}
++
+ static void
+ sss_dp_get_domains_process(struct tevent_req *subreq)
+ {
+@@ -267,6 +287,9 @@ sss_dp_get_domains_process(struct tevent_req *subreq)
+                   ret, sss_strerror(ret));
+             goto fail;
+         }
++
++        sss_resp_update_certmaps(state->rctx);
++
+         tevent_req_done(req);
+         return;
+     }
+-- 
+2.9.4
+

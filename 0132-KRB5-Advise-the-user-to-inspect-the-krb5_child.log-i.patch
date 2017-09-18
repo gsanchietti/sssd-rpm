@@ -1,0 +1,39 @@
+From cf1bb5464609f5873685406f9e09e43de8738e42 Mon Sep 17 00:00:00 2001
+From: Jakub Hrozek <jhrozek@redhat.com>
+Date: Mon, 22 May 2017 09:55:12 +0200
+Subject: [PATCH 132/135] KRB5: Advise the user to inspect the krb5_child.log
+ if the child doesn't return a valid response
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+If the child returns a runtime error, it is often not clear from the
+domain debug logs what to do next. This patch adds a DEBUG message that
+tells the admin to look into the krb5_child.log
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/2955
+
+Reviewed-by: Pavel Březina <pbrezina@redhat.com>
+(cherry picked from commit 7410f735b64937e0c2401c09b5cffc9c78b11849)
+---
+ src/providers/krb5/krb5_auth.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/providers/krb5/krb5_auth.c b/src/providers/krb5/krb5_auth.c
+index 2faf18d17a735476c20f9cc27b15be4a39cadc5c..894bd41bde031ac33187bfa3b14202e9429a9198 100644
+--- a/src/providers/krb5/krb5_auth.c
++++ b/src/providers/krb5/krb5_auth.c
+@@ -890,6 +890,9 @@ static void krb5_auth_done(struct tevent_req *subreq)
+                         state->be_ctx->domain->pwd_expiration_warning,
+                         &res);
+     if (ret) {
++        DEBUG(SSSDBG_IMPORTANT_INFO,
++              "The krb5_child process returned an error. Please inspect the "
++              "krb5_child.log file or the journal for more information\n");
+         DEBUG(SSSDBG_OP_FAILURE, "Could not parse child response [%d]: %s\n",
+               ret, strerror(ret));
+         goto done;
+-- 
+2.9.3
+

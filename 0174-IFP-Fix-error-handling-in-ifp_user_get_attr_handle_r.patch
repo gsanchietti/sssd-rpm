@@ -1,0 +1,39 @@
+From 271679e7a7c0c50e39c7a0989dbae77385475c60 Mon Sep 17 00:00:00 2001
+From: Jakub Hrozek <jhrozek@redhat.com>
+Date: Wed, 14 Jun 2017 18:25:21 +0200
+Subject: [PATCH 174/181] IFP: Fix error handling in
+ ifp_user_get_attr_handle_reply()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This bug was introduced in 37d2194cc9ea4d0254c88a3419e2376572562bab
+
+Reviewed-by: Fabiano Fidêncio <fidencio@redhat.com>
+(cherry picked from commit 15a76bb7bd9791a3ed1ae416f70753d32c6ff599)
+---
+ src/responder/ifp/ifpsrv_cmd.c | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/src/responder/ifp/ifpsrv_cmd.c b/src/responder/ifp/ifpsrv_cmd.c
+index d86aed57206ba8f0a6facbd64051fa7c901513f3..fc9161e82e906ac7dde2712ffc7c0cbb58c519b7 100644
+--- a/src/responder/ifp/ifpsrv_cmd.c
++++ b/src/responder/ifp/ifpsrv_cmd.c
+@@ -236,9 +236,11 @@ ifp_user_get_attr_handle_reply(struct sss_domain_info *domain,
+             if (strcmp(attrs[ai], "domainname") == 0) {
+                 ret = ifp_add_value_to_dict(&iter_dict, "domainname",
+                                             domain->name);
+-                DEBUG(SSSDBG_MINOR_FAILURE,
+-                      "Cannot add attribute %s to message\n", attrs[ai]);
+-                continue;
++                if (ret != EOK) {
++                    DEBUG(SSSDBG_MINOR_FAILURE,
++                          "Cannot add attribute domainname to message\n");
++                    continue;
++                }
+             }
+ 
+             el = sss_view_ldb_msg_find_element(domain, res->msgs[0], attrs[ai]);
+-- 
+2.9.4
+

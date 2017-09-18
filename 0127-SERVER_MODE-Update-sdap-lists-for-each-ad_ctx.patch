@@ -1,0 +1,81 @@
+From 9b9d3e2817fdcf16f2949641d4130b39856a4bf6 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Michal=20=C5=BDidek?= <mzidek@redhat.com>
+Date: Fri, 28 Apr 2017 20:49:56 +0200
+Subject: [PATCH 127/127] SERVER_MODE: Update sdap lists for each ad_ctx
+
+We use separate AD context for each subdomain in the server mode.
+Every such context has it's own sdap_domain list witch represents
+sdap options such as filter and search bases for every domain.
+
+However AD context can only fully initialize sdap_domain structure
+for the same domain for which the whole context was created, which
+resulted in the other sdap_domain structures to be have automaticily
+detected settings. This can cause problems if user is member of
+groups from multiple domains.
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/3381
+
+Reviewed-by: Jakub Hrozek <jhrozek@redhat.com>
+(cherry picked from commit 21f3d6124ea28218d02e1e345d38e2b948e4ec23)
+---
+ src/providers/ipa/ipa_subdomains_server.c | 36 +++++++++++++++++++++++++++++++
+ 1 file changed, 36 insertions(+)
+
+diff --git a/src/providers/ipa/ipa_subdomains_server.c b/src/providers/ipa/ipa_subdomains_server.c
+index b02ea67af964a03e5466067cdb2b3ba4498120eb..443d83824f329b9d8c3d8e820113e1029f832240 100644
+--- a/src/providers/ipa/ipa_subdomains_server.c
++++ b/src/providers/ipa/ipa_subdomains_server.c
+@@ -870,6 +870,7 @@ static errno_t ipa_server_create_trusts_step(struct tevent_req *req)
+ {
+     struct tevent_req *subreq = NULL;
+     struct ipa_ad_server_ctx *trust_iter;
++    struct ipa_ad_server_ctx *trust_i;
+     struct ipa_server_create_trusts_state *state = NULL;
+ 
+     state = tevent_req_data(req, struct ipa_server_create_trusts_state);
+@@ -900,6 +901,41 @@ static errno_t ipa_server_create_trusts_step(struct tevent_req *req)
+         }
+     }
+ 
++    /* Refresh all sdap_dom lists in all ipa_ad_server_ctx contexts */
++    DLIST_FOR_EACH(trust_iter, state->id_ctx->server_mode->trusts) {
++        struct sdap_domain *sdom_a;
++
++        sdom_a = sdap_domain_get(trust_iter->ad_id_ctx->sdap_id_ctx->opts,
++                                 trust_iter->dom);
++        if (sdom_a == NULL) {
++            continue;
++        }
++
++        DLIST_FOR_EACH(trust_i, state->id_ctx->server_mode->trusts) {
++            struct sdap_domain *sdom_b;
++
++            if (strcmp(trust_iter->dom->name, trust_i->dom->name) == 0) {
++                continue;
++            }
++
++            sdom_b = sdap_domain_get(trust_i->ad_id_ctx->sdap_id_ctx->opts,
++                                     sdom_a->dom);
++            if (sdom_b == NULL) {
++                continue;
++            }
++
++            /* Replace basedn and search bases from sdom_b with values
++             * from sdom_a */
++            sdom_b->search_bases = sdom_a->search_bases;
++            sdom_b->user_search_bases = sdom_a->user_search_bases;
++            sdom_b->group_search_bases = sdom_a->group_search_bases;
++            sdom_b->netgroup_search_bases = sdom_a->netgroup_search_bases;
++            sdom_b->sudo_search_bases = sdom_a->sudo_search_bases;
++            sdom_b->service_search_bases = sdom_a->service_search_bases;
++            sdom_b->autofs_search_bases = sdom_a->autofs_search_bases;
++        }
++    }
++
+     return EOK;
+ }
+ 
+-- 
+2.9.3
+

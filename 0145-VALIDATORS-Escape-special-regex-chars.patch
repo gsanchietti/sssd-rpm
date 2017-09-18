@@ -1,0 +1,35 @@
+From fc6bffc8523e6decf4656182f8caf72236e45c3d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Michal=20=C5=BDidek?= <mzidek@redhat.com>
+Date: Tue, 4 Apr 2017 20:06:40 +0200
+Subject: [PATCH 145/152] VALIDATORS: Escape special regex chars
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The rule allowed_domain_options did not work because
+of bad regex.
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/3356
+
+Reviewed-by: Lukáš Slebodník <lslebodn@redhat.com>
+---
+ src/config/cfg_rules.ini | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/config/cfg_rules.ini b/src/config/cfg_rules.ini
+index a30fe57e262716abeb2d2af9c3add326122ee4ca..628f2e0e0a040bad5128d00d9348aa91170ed704 100644
+--- a/src/config/cfg_rules.ini
++++ b/src/config/cfg_rules.ini
+@@ -295,7 +295,7 @@ option = responder_idle_timeout
+ 
+ [rule/allowed_domain_options]
+ validator = ini_allowed_options
+-section_re = ^(domain|application)/.*$
++section_re = ^\(domain\|application\)/.*$
+ 
+ option = debug
+ option = debug_level
+-- 
+2.9.4
+

@@ -1,0 +1,26 @@
+From 8d38a4b28ab7af15406b244910f369ba1aff02db Mon Sep 17 00:00:00 2001
+From: Jakub Hrozek <jhrozek@redhat.com>
+Date: Thu, 30 Oct 2014 15:59:17 +0100
+Subject: [PATCH 93/93] NOUPSTREAM: Default to root if sssd user is not
+ specified
+
+---
+ src/monitor/monitor.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/monitor/monitor.c b/src/monitor/monitor.c
+index 0dea327213a1ad04b6f69c0ffb0fb87254420796..20b4aef4ee94fd42de1585d7d7c2e01ea01845ac 100644
+--- a/src/monitor/monitor.c
++++ b/src/monitor/monitor.c
+@@ -925,7 +925,7 @@ static int get_service_user(struct mt_ctx *ctx)
+ 
+     ret = confdb_get_string(ctx->cdb, ctx, CONFDB_MONITOR_CONF_ENTRY,
+                             CONFDB_MONITOR_USER_RUNAS,
+-                            SSSD_USER, &user_str);
++                            "root", &user_str);
+     if (ret != EOK) {
+         DEBUG(SSSDBG_FATAL_FAILURE, "Failed to get the user to run as\n");
+         return ret;
+-- 
+1.9.3
+

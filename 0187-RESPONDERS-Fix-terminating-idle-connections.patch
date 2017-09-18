@@ -1,0 +1,84 @@
+From d6c7d35fdb4d416360a855a37b8c2164f053b470 Mon Sep 17 00:00:00 2001
+From: Jakub Hrozek <jhrozek@redhat.com>
+Date: Tue, 11 Jul 2017 18:26:01 +0200
+Subject: [PATCH 187/190] RESPONDERS: Fix terminating idle connections
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The client_idle_handler() function tried to schedule another tevent
+timer to check for idle client connections in case the current
+connection was still valid, but in doing so, it also stored the current
+time into the last_request_time field of the client context.
+
+This kept the connection always alive, because the last_request_time
+could then never be older than the timeout.
+
+This patch changes the setup_client_idle_timer() function to only do
+what the synopsis says and set the idle timer. The caller (usually the
+function that accepts the connection) is supposed to store the request
+time itself.
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/3448
+
+Reviewed-by: Lukáš Slebodník <lslebodn@redhat.com>
+Reviewed-by: Fabiano Fidêncio <fidencio@redhat.com>
+---
+ src/responder/common/responder_common.c | 16 +++++++++++-----
+ 1 file changed, 11 insertions(+), 5 deletions(-)
+
+diff --git a/src/responder/common/responder_common.c b/src/responder/common/responder_common.c
+index 9d4889be652c6d6fb974b59001a9ac77b496e9ab..9d706f9799ef1b31122d8380fbf9c53ba0cc9e68 100644
+--- a/src/responder/common/responder_common.c
++++ b/src/responder/common/responder_common.c
+@@ -607,7 +607,15 @@ static void accept_fd_handler(struct tevent_context *ev,
+     cctx->ev = ev;
+     cctx->rctx = rctx;
+ 
+-    /* Set up the idle timer */
++    /* Record the new time and set up the idle timer */
++    ret = reset_client_idle_timer(cctx);
++    if (ret != EOK) {
++        DEBUG(SSSDBG_MINOR_FAILURE,
++              "Could not create idle timer for client. "
++              "This connection may not auto-terminate\n");
++        /* Non-fatal, continue */
++    }
++
+     ret = setup_client_idle_timer(cctx);
+     if (ret != EOK) {
+         DEBUG(SSSDBG_CRIT_FAILURE,
+@@ -634,7 +642,7 @@ static void client_idle_handler(struct tevent_context *ev,
+     if (cctx->last_request_time > now) {
+         DEBUG(SSSDBG_IMPORTANT_INFO,
+               "Time shift detected, re-scheduling the client timeout\n");
+-        goto end;
++        goto done;
+     }
+ 
+     if ((now - cctx->last_request_time) > cctx->rctx->client_idle_timeout) {
+@@ -648,7 +656,7 @@ static void client_idle_handler(struct tevent_context *ev,
+         return;
+     }
+ 
+-end:
++done:
+     setup_client_idle_timer(cctx);
+ }
+ 
+@@ -661,11 +669,9 @@ errno_t reset_client_idle_timer(struct cli_ctx *cctx)
+ 
+ static errno_t setup_client_idle_timer(struct cli_ctx *cctx)
+ {
+-    time_t now = time(NULL);
+     struct timeval tv =
+             tevent_timeval_current_ofs(cctx->rctx->client_idle_timeout/2, 0);
+ 
+-    cctx->last_request_time = now;
+     talloc_zfree(cctx->idle);
+ 
+     cctx->idle = tevent_add_timer(cctx->ev, cctx, tv, client_idle_handler, cctx);
+-- 
+2.9.4
+

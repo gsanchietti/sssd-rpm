@@ -1,0 +1,168 @@
+From ef6d1aaaa416bca3318e2961269620db7720a55b Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Michal=20=C5=BDidek?= <mzidek@redhat.com>
+Date: Tue, 11 Apr 2017 19:56:37 +0200
+Subject: [PATCH 117/118] SDAP: Fix handling of search bases
+
+We were rewriting the sdap_domain's search bases for only the first
+sdap_domain in the list, which does not work for subdomains.
+
+Also when search bases were already initialized in sdap_domain_subdom_add,
+we should only rewrite them when they were explicitly set in sssd.conf.
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/3351
+
+Reviewed-by: Jakub Hrozek <jhrozek@redhat.com>
+(cherry picked from commit 4c49edbd8df651b1737c59459637962c117212c6)
+---
+ src/providers/ad/ad_common.c              | 39 +++++++++++++++++++++----------
+ src/providers/ad/ad_common.h              |  3 ++-
+ src/providers/ipa/ipa_subdomains_server.c |  2 +-
+ src/providers/ldap/ldap_options.c         |  2 --
+ 4 files changed, 30 insertions(+), 16 deletions(-)
+
+diff --git a/src/providers/ad/ad_common.c b/src/providers/ad/ad_common.c
+index f893b748a2ddcff1eab6e8d919d2aa950b825446..1a9d8dc0bfdf18e76e3c97a7ac7e297c4d24fd44 100644
+--- a/src/providers/ad/ad_common.c
++++ b/src/providers/ad/ad_common.c
+@@ -29,7 +29,8 @@ struct ad_server_data {
+     bool gc;
+ };
+ 
+-errno_t ad_set_search_bases(struct sdap_options *id_opts);
++errno_t ad_set_search_bases(struct sdap_options *id_opts,
++                            struct sdap_domain *sdap);
+ static errno_t ad_set_sdap_options(struct ad_options *ad_opts,
+                                    struct sdap_options *id_opts);
+ 
+@@ -1074,7 +1075,7 @@ ad_get_id_options(struct ad_options *ad_opts,
+     }
+ 
+     /* Set up search bases if they were assigned explicitly */
+-    ret = ad_set_search_bases(id_opts);
++    ret = ad_set_search_bases(id_opts, NULL);
+     if (ret != EOK) {
+         talloc_free(id_opts);
+         return ret;
+@@ -1116,11 +1117,14 @@ ad_get_autofs_options(struct ad_options *ad_opts,
+ }
+ 
+ errno_t
+-ad_set_search_bases(struct sdap_options *id_opts)
++ad_set_search_bases(struct sdap_options *id_opts,
++                    struct sdap_domain *sdom)
+ {
+     errno_t ret;
+-    char *default_search_base;
++    char *default_search_base = NULL;
+     size_t o;
++    struct sdap_domain *sdap_dom;
++    bool has_default;
+     const int search_base_options[] = { SDAP_USER_SEARCH_BASE,
+                                         SDAP_GROUP_SEARCH_BASE,
+                                         SDAP_NETGROUP_SEARCH_BASE,
+@@ -1132,10 +1136,21 @@ ad_set_search_bases(struct sdap_options *id_opts)
+      * been specifically overridden.
+      */
+ 
+-    default_search_base =
+-            dp_opt_get_string(id_opts->basic, SDAP_SEARCH_BASE);
++    if (sdom != NULL) {
++        sdap_dom = sdom;
++    } else {
++        /* If no specific sdom was given, use the first in the list. */
++        sdap_dom = id_opts->sdom;
++    }
+ 
+-    if (default_search_base) {
++    has_default = sdap_dom->search_bases != NULL;
++
++    if (has_default == false) {
++        default_search_base =
++                dp_opt_get_string(id_opts->basic, SDAP_SEARCH_BASE);
++    }
++
++    if (default_search_base && has_default == false) {
+         /* set search bases if they are not */
+         for (o = 0; search_base_options[o] != -1; o++) {
+             if (NULL == dp_opt_get_string(id_opts->basic,
+@@ -1162,31 +1177,31 @@ ad_set_search_bases(struct sdap_options *id_opts)
+     /* Default search */
+     ret = sdap_parse_search_base(id_opts, id_opts->basic,
+                                  SDAP_SEARCH_BASE,
+-                                 &id_opts->sdom->search_bases);
++                                 &sdap_dom->search_bases);
+     if (ret != EOK && ret != ENOENT) goto done;
+ 
+     /* User search */
+     ret = sdap_parse_search_base(id_opts, id_opts->basic,
+                                  SDAP_USER_SEARCH_BASE,
+-                                 &id_opts->sdom->user_search_bases);
++                                 &sdap_dom->user_search_bases);
+     if (ret != EOK && ret != ENOENT) goto done;
+ 
+     /* Group search base */
+     ret = sdap_parse_search_base(id_opts, id_opts->basic,
+                                  SDAP_GROUP_SEARCH_BASE,
+-                                 &id_opts->sdom->group_search_bases);
++                                 &sdap_dom->group_search_bases);
+     if (ret != EOK && ret != ENOENT) goto done;
+ 
+     /* Netgroup search */
+     ret = sdap_parse_search_base(id_opts, id_opts->basic,
+                                  SDAP_NETGROUP_SEARCH_BASE,
+-                                 &id_opts->sdom->netgroup_search_bases);
++                                 &sdap_dom->netgroup_search_bases);
+     if (ret != EOK && ret != ENOENT) goto done;
+ 
+     /* Service search */
+     ret = sdap_parse_search_base(id_opts, id_opts->basic,
+                                  SDAP_SERVICE_SEARCH_BASE,
+-                                 &id_opts->sdom->service_search_bases);
++                                 &sdap_dom->service_search_bases);
+     if (ret != EOK && ret != ENOENT) goto done;
+ 
+     ret = EOK;
+diff --git a/src/providers/ad/ad_common.h b/src/providers/ad/ad_common.h
+index 2981550f6c390929501ec8942e861b16ea0a5cb0..ce33b37c75f45ae72adb268858cce34759b8b02f 100644
+--- a/src/providers/ad/ad_common.h
++++ b/src/providers/ad/ad_common.h
+@@ -130,7 +130,8 @@ struct ad_options *ad_create_1way_trust_options(TALLOC_CTX *mem_ctx,
+                                                 const char *keytab,
+                                                 const char *sasl_authid);
+ 
+-errno_t ad_set_search_bases(struct sdap_options *id_opts);
++errno_t ad_set_search_bases(struct sdap_options *id_opts,
++                            struct sdap_domain *sdap);
+ 
+ errno_t
+ ad_failover_init(TALLOC_CTX *mem_ctx, struct be_ctx *ctx,
+diff --git a/src/providers/ipa/ipa_subdomains_server.c b/src/providers/ipa/ipa_subdomains_server.c
+index e8ee30392d84f84e30bcdaa3d2110ba130b1ad73..b02ea67af964a03e5466067cdb2b3ba4498120eb 100644
+--- a/src/providers/ipa/ipa_subdomains_server.c
++++ b/src/providers/ipa/ipa_subdomains_server.c
+@@ -332,7 +332,7 @@ ipa_ad_ctx_new(struct be_ctx *be_ctx,
+         return EFAULT;
+     }
+ 
+-    ret = ad_set_search_bases(ad_options->id);
++    ret = ad_set_search_bases(ad_options->id, sdom);
+     if (ret != EOK) {
+         DEBUG(SSSDBG_OP_FAILURE, "Cannot initialize AD search bases\n");
+         talloc_free(ad_options);
+diff --git a/src/providers/ldap/ldap_options.c b/src/providers/ldap/ldap_options.c
+index 15a2609f07506b6dd442b180651a7e25461976c0..eb4e177b456253ebdfa06ee52886a5dffe0d3351 100644
+--- a/src/providers/ldap/ldap_options.c
++++ b/src/providers/ldap/ldap_options.c
+@@ -581,8 +581,6 @@ errno_t sdap_parse_search_base(TALLOC_CTX *mem_ctx,
+     char *unparsed_base;
+     const char *old_filter = NULL;
+ 
+-    *_search_bases = NULL;
+-
+     switch (class) {
+     case SDAP_SEARCH_BASE:
+         class_name = "DEFAULT";
+-- 
+2.9.3
+

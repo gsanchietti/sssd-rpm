@@ -1,0 +1,105 @@
+From b435e510fb06af4e8f3cffd3730f43a6aff165fa Mon Sep 17 00:00:00 2001
+From: Sumit Bose <sbose@redhat.com>
+Date: Mon, 8 May 2017 17:30:06 +0200
+Subject: [PATCH 159/160] sysdb: sysdb_get_certmap() allow empty certmap
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since sysdb_get_certmap() returns the user name hint information as well
+it should return a result even if there are no certmaps.
+
+Related to https://pagure.io/SSSD/sssd/issue/3395
+
+Reviewed-by: Fabiano Fidêncio <fidencio@redhat.com>
+(cherry picked from commit ee7e72a65d323636600ffda271d5b5c4ddbc78b1)
+---
+ src/db/sysdb_certmap.c                | 13 ++++++++-----
+ src/tests/cmocka/test_sysdb_certmap.c |  9 +++++----
+ 2 files changed, 13 insertions(+), 9 deletions(-)
+
+diff --git a/src/db/sysdb_certmap.c b/src/db/sysdb_certmap.c
+index 4917796b11c3967b4d147ebee7c7e83f09b872ce..2d89c08a07be6e8eaf853d6c50b206c5c53d5a37 100644
+--- a/src/db/sysdb_certmap.c
++++ b/src/db/sysdb_certmap.c
+@@ -269,7 +269,7 @@ errno_t sysdb_get_certmap(TALLOC_CTX *mem_ctx, struct sysdb_ctx *sysdb,
+     size_t d;
+     struct ldb_dn *container_dn = NULL;
+     int ret;
+-    struct certmap_info **maps;
++    struct certmap_info **maps = NULL;
+     TALLOC_CTX *tmp_ctx = NULL;
+     struct ldb_result *res;
+     const char *tmp_str;
+@@ -320,7 +320,7 @@ errno_t sysdb_get_certmap(TALLOC_CTX *mem_ctx, struct sysdb_ctx *sysdb,
+ 
+     if (res->count == 0) {
+         DEBUG(SSSDBG_TRACE_FUNC, "No certificate maps found.\n");
+-        ret = ENOENT;
++        ret = EOK;
+         goto done;
+     }
+ 
+@@ -377,7 +377,7 @@ errno_t sysdb_get_certmap(TALLOC_CTX *mem_ctx, struct sysdb_ctx *sysdb,
+                                                SYSDB_CERTMAP_PRIORITY,
+                                                (uint64_t) -1);
+         if (tmp_uint != (uint64_t) -1) {
+-            if (tmp_uint >= UINT32_MAX) {
++            if (tmp_uint > UINT32_MAX) {
+                 DEBUG(SSSDBG_OP_FAILURE, "Priority value [%lu] too large.\n",
+                                          (unsigned long) tmp_uint);
+                 ret = EINVAL;
+@@ -414,11 +414,14 @@ errno_t sysdb_get_certmap(TALLOC_CTX *mem_ctx, struct sysdb_ctx *sysdb,
+         }
+     }
+ 
+-    *certmaps = talloc_steal(mem_ctx, maps);
+-    *user_name_hint = hint;
+     ret = EOK;
+ 
+ done:
++    if (ret == EOK) {
++        *certmaps = talloc_steal(mem_ctx, maps);
++        *user_name_hint = hint;
++    }
++
+     talloc_free(tmp_ctx);
+ 
+     return ret;
+diff --git a/src/tests/cmocka/test_sysdb_certmap.c b/src/tests/cmocka/test_sysdb_certmap.c
+index fb07165561779226935f436c308c85abfc305635..72edf5f53fd6d23d7279eaa496b3e798c06cb903 100644
+--- a/src/tests/cmocka/test_sysdb_certmap.c
++++ b/src/tests/cmocka/test_sysdb_certmap.c
+@@ -88,8 +88,8 @@ static void test_sysdb_get_certmap_not_exists(void **state)
+ 
+     ret = sysdb_get_certmap(ctctx, ctctx->tctx->sysdb, &certmap,
+                             &user_name_hint);
+-    assert_int_equal(ret, ENOENT);
+-
++    assert_int_equal(ret, EOK);
++    assert_null(certmap);
+ }
+ 
+ static void check_certmap(struct certmap_info *m, struct certmap_info *r,
+@@ -134,7 +134,7 @@ static void test_sysdb_update_certmap(void **state)
+     int ret;
+     const char *domains[] = { "dom1.test", "dom2.test", "dom3.test", NULL };
+     struct certmap_info map_a = { discard_const("map_a"), 11, discard_const("abc"), discard_const("def"), NULL };
+-    struct certmap_info map_b = { discard_const("map_b"), 22, discard_const("abc"), NULL, domains };
++    struct certmap_info map_b = { discard_const("map_b"), UINT_MAX, discard_const("abc"), NULL, domains };
+     struct certmap_info *certmap_empty[] = { NULL };
+     struct certmap_info *certmap_a[] = { &map_a, NULL };
+     struct certmap_info *certmap_b[] = { &map_b, NULL };
+@@ -152,7 +152,8 @@ static void test_sysdb_update_certmap(void **state)
+ 
+     ret = sysdb_get_certmap(ctctx, ctctx->tctx->sysdb, &certmap,
+                             &user_name_hint);
+-    assert_int_equal(ret, ENOENT);
++    assert_int_equal(ret, EOK);
++    assert_null(certmap);
+ 
+     ret = sysdb_update_certmap(ctctx->tctx->sysdb, certmap_a, false);
+     assert_int_equal(ret, EOK);
+-- 
+2.9.4
+

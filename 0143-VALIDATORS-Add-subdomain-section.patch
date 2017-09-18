@@ -1,0 +1,53 @@
+From 270121098caff2496da73795fe586ff734ae1e56 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Michal=20=C5=BDidek?= <mzidek@redhat.com>
+Date: Tue, 4 Apr 2017 18:01:02 +0200
+Subject: [PATCH 143/152] VALIDATORS: Add subdomain section
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add separate rule for subdomain sections.
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/3356
+
+Reviewed-by: Lukáš Slebodník <lslebodn@redhat.com>
+---
+ src/config/cfg_rules.ini | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/src/config/cfg_rules.ini b/src/config/cfg_rules.ini
+index e47ff33242d6a9e5979fe0eb8eea14c2af28685a..4b30e8fc43b50844023e7fffa607a59530a302f0 100644
+--- a/src/config/cfg_rules.ini
++++ b/src/config/cfg_rules.ini
+@@ -11,7 +11,8 @@ section = ifp
+ section = secrets
+ section = kcm
+ section_re = ^secrets/users/[0-9]\+$
+-section_re = ^domain/.*$
++section_re = ^domain/[^/\@]\+$
++section_re = ^domain/[^/\@]\+/[^/\@]\+$
+ section_re = ^application/.*$
+ 
+ [rule/allowed_sssd_options]
+@@ -698,3 +699,17 @@ validator = ini_allowed_options
+ section_re = ^application/.*$
+ 
+ option = inherit_from
++
++[rule/allowed_subdomain_options]
++validator = ini_allowed_options
++section_re = ^domain/[^/\@]\+/[^/\@]\+$
++
++option = ldap_search_base
++option = ldap_user_search_base
++option = ldap_group_search_base
++option = ldap_netgroup_search_base
++option = ldap_service_search_base
++option = ad_server
++option = ad_backup_server
++option = ad_site
++option = use_fully_qualified_names
+-- 
+2.9.4
+

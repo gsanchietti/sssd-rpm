@@ -1,0 +1,30 @@
+From 2ae1485566cbd2b095935aaf7e851d12d2de4513 Mon Sep 17 00:00:00 2001
+From: Jakub Hrozek <jhrozek@redhat.com>
+Date: Wed, 24 May 2017 21:26:22 +0200
+Subject: [PATCH 141/141] IPA: Return from function after marking a request as
+ finished
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Reviewed-by: Fabiano Fidêncio <fidencio@redhat.com>
+(cherry picked from commit eb404bcdbbff7e080a93d816e17b8cec04f79fc4)
+---
+ src/providers/ipa/ipa_s2n_exop.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/providers/ipa/ipa_s2n_exop.c b/src/providers/ipa/ipa_s2n_exop.c
+index 3f5f9859554f0b98ecd3fdad31fd66274c5707b0..39ed17cbf0e8c523212084197e9f2963fed88dc8 100644
+--- a/src/providers/ipa/ipa_s2n_exop.c
++++ b/src/providers/ipa/ipa_s2n_exop.c
+@@ -2664,6 +2664,7 @@ static void ipa_s2n_get_list_done(struct tevent_req  *subreq)
+         } else {
+             tevent_req_error(req, EINVAL);
+         }
++        return;
+     }
+ 
+     ret = sysdb_attrs_get_string(state->attrs->sysdb_attrs, SYSDB_SID_STR,
+-- 
+2.9.4
+

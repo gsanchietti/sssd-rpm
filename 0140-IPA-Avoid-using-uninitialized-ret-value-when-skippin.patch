@@ -1,0 +1,30 @@
+From 4986fe8b68a3e14a30e8091353bf0679eb3c5e55 Mon Sep 17 00:00:00 2001
+From: Jakub Hrozek <jhrozek@redhat.com>
+Date: Wed, 24 May 2017 21:24:20 +0200
+Subject: [PATCH 140/141] IPA: Avoid using uninitialized ret value when
+ skipping entries from the joined domain
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Reviewed-by: Fabiano Fidêncio <fidencio@redhat.com>
+(cherry picked from commit 3e3034199b44e01899ec7ba8152fef3738a0e093)
+---
+ src/providers/ipa/ipa_s2n_exop.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/providers/ipa/ipa_s2n_exop.c b/src/providers/ipa/ipa_s2n_exop.c
+index 15904e0197919c34b1bce58b4bd2c070f99b67a7..3f5f9859554f0b98ecd3fdad31fd66274c5707b0 100644
+--- a/src/providers/ipa/ipa_s2n_exop.c
++++ b/src/providers/ipa/ipa_s2n_exop.c
+@@ -991,6 +991,7 @@ static errno_t s2n_response_to_attrs(TALLOC_CTX *mem_ctx,
+                 } else {
+                     DEBUG(SSSDBG_TRACE_ALL,
+                           "[%s] from root domain, skipping.\n", fq_name);
++                    ret = EOK; /* Free resources and continue in the loop */
+                 }
+                 ber_memfree(domain_name);
+                 ber_memfree(name);
+-- 
+2.9.4
+

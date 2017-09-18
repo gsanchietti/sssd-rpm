@@ -1,0 +1,258 @@
+From 19cb2e2d826dc4e3c938c5a6b51a03338e80fa9e Mon Sep 17 00:00:00 2001
+From: Sumit Bose <sbose@redhat.com>
+Date: Mon, 8 May 2017 16:01:26 +0200
+Subject: [PATCH 156/160] pam_sss: add support for SSS_PAM_CERT_INFO_WITH_HINT
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The new response type SSS_PAM_CERT_INFO_WITH_HINT is equivalent to
+SSS_PAM_CERT_INFO but tells pam_sss to prompt for an option user name as
+well.
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/3395
+
+Reviewed-by: Fabiano Fidêncio <fidencio@redhat.com>
+(cherry picked from commit a192a1d72e92dae3e71e062b333e51a5095a0395)
+---
+ src/sss_client/pam_message.h |   1 +
+ src/sss_client/pam_sss.c     | 129 ++++++++++++++++++++++++++++++++++++++-----
+ src/sss_client/sss_cli.h     |  11 +++-
+ 3 files changed, 127 insertions(+), 14 deletions(-)
+
+diff --git a/src/sss_client/pam_message.h b/src/sss_client/pam_message.h
+index 3f4a770ac08ee416ead2f215ab873e8eb277c9eb..f215392f6879f01a0ca12abc8807bac5fc1f1cbb 100644
+--- a/src/sss_client/pam_message.h
++++ b/src/sss_client/pam_message.h
+@@ -63,6 +63,7 @@ struct pam_items {
+     char *token_name;
+     char *module_name;
+     char *key_id;
++    bool user_name_hint;
+ };
+ 
+ int pack_message_v3(struct pam_items *pi, size_t *size, uint8_t **buffer);
+diff --git a/src/sss_client/pam_sss.c b/src/sss_client/pam_sss.c
+index db0dcb9de7b893850bcea96a9cdf76dc0b36dcee..1c06079967e3d9076d537c3de8aba93e13f76d09 100644
+--- a/src/sss_client/pam_sss.c
++++ b/src/sss_client/pam_sss.c
+@@ -982,6 +982,7 @@ static int eval_response(pam_handle_t *pamh, size_t buflen, uint8_t *buf,
+ 
+                 break;
+             case SSS_PAM_CERT_INFO:
++            case SSS_PAM_CERT_INFO_WITH_HINT:
+                 if (buf[p + (len - 1)] != '\0') {
+                     D(("cert info does not end with \\0."));
+                     break;
+@@ -994,7 +995,19 @@ static int eval_response(pam_handle_t *pamh, size_t buflen, uint8_t *buf,
+                     break;
+                 }
+ 
+-                if (pi->pam_user == NULL || *(pi->pam_user) == '\0') {
++                if (type == SSS_PAM_CERT_INFO && pi->cert_user == '\0') {
++                    D(("Invalid CERT message"));
++                    break;
++                }
++
++                if (type == SSS_PAM_CERT_INFO_WITH_HINT) {
++                    pi->user_name_hint = true;
++                } else {
++                    pi->user_name_hint = false;
++                }
++
++                if ((pi->pam_user == NULL || *(pi->pam_user) == '\0')
++                        && pi->cert_user != '\0') {
+                     ret = pam_set_item(pamh, PAM_USER, pi->cert_user);
+                     if (ret != PAM_SUCCESS) {
+                         D(("Failed to set PAM_USER during "
+@@ -1469,7 +1482,7 @@ done:
+     return ret;
+ }
+ 
+-#define SC_PROMPT_FMT "PIN for %s for user %s"
++#define SC_PROMPT_FMT "PIN for %s"
+ 
+ static int prompt_sc_pin(pam_handle_t *pamh, struct pam_items *pi)
+ {
+@@ -1478,32 +1491,108 @@ static int prompt_sc_pin(pam_handle_t *pamh, struct pam_items *pi)
+     char *prompt;
+     size_t size;
+     size_t needed_size;
++    const struct pam_conv *conv;
++    const struct pam_message *mesg[2] = { NULL, NULL };
++    struct pam_message m[2] = { { 0 }, { 0 } };
++    struct pam_response *resp = NULL;
+ 
+-    if (pi->token_name == NULL || *pi->token_name == '\0'
+-            || pi->cert_user == NULL || *pi->cert_user == '\0') {
++    if (pi->token_name == NULL || *pi->token_name == '\0') {
+         return EINVAL;
+     }
+ 
+-    size = sizeof(SC_PROMPT_FMT) + strlen(pi->token_name) +
+-           strlen(pi->cert_user);
++    size = sizeof(SC_PROMPT_FMT) + strlen(pi->token_name);
+     prompt = malloc(size);
+     if (prompt == NULL) {
+         D(("malloc failed."));
+         return ENOMEM;
+     }
+ 
+-    ret = snprintf(prompt, size, SC_PROMPT_FMT, pi->token_name, pi->cert_user);
++    ret = snprintf(prompt, size, SC_PROMPT_FMT, pi->token_name);
+     if (ret < 0 || ret >= size) {
+         D(("snprintf failed."));
+         free(prompt);
+         return EFAULT;
+     }
+ 
+-    ret = do_pam_conversation(pamh, PAM_PROMPT_ECHO_OFF, prompt, NULL, &answer);
+-    free(prompt);
+-    if (ret != PAM_SUCCESS) {
+-        D(("do_pam_conversation failed."));
+-        return ret;
++    if (pi->user_name_hint) {
++        ret = pam_get_item(pamh, PAM_CONV, (const void **)&conv);
++        if (ret != PAM_SUCCESS) {
++            return ret;
++        }
++        if (conv == NULL || conv->conv == NULL) {
++            logger(pamh, LOG_ERR, "No conversation function");
++            return PAM_SYSTEM_ERR;
++        }
++
++        m[0].msg_style = PAM_PROMPT_ECHO_OFF;
++        m[0].msg = prompt;
++        m[1].msg_style = PAM_PROMPT_ECHO_ON;
++        m[1].msg = "User name hint: ";
++
++        mesg[0] = (const struct pam_message *)m;
++        /* The following assignment might look a bit odd but is recommended in the
++         * pam_conv man page to make sure that the second argument of the PAM
++         * conversation function can be interpreted in two different ways.
++         * Basically it is important that both the actual struct pam_message and
++         * the pointers to the struct pam_message are arrays. Since the assignment
++         * makes clear that mesg[] and (*mesg)[] are arrays it should be kept this
++         * way and not be replaced by other equivalent assignments. */
++        mesg[1] = &((*mesg)[1]);
++
++        ret = conv->conv(2, mesg, &resp, conv->appdata_ptr);
++        if (ret != PAM_SUCCESS) {
++            D(("Conversation failure: %s.", pam_strerror(pamh, ret)));
++            return ret;
++        }
++
++        if (resp == NULL) {
++            D(("response expected, but resp==NULL"));
++            return PAM_SYSTEM_ERR;
++        }
++
++        if (resp[0].resp == NULL || *(resp[0].resp) == '\0') {
++            D(("Missing PIN."));
++            ret = PAM_CRED_INSUFFICIENT;
++            goto done;
++        }
++
++        answer = strndup(resp[0].resp, MAX_AUTHTOK_SIZE);
++        _pam_overwrite((void *)resp[0].resp);
++        free(resp[0].resp);
++        resp[0].resp = NULL;
++        if (answer == NULL) {
++            D(("strndup failed"));
++            ret = PAM_BUF_ERR;
++            goto done;
++        }
++
++        if (resp[1].resp != NULL && *(resp[1].resp) != '\0') {
++            ret = pam_set_item(pamh, PAM_USER, resp[1].resp);
++            free(resp[1].resp);
++            resp[1].resp = NULL;
++            if (ret != PAM_SUCCESS) {
++                D(("Failed to set PAM_USER with user name hint [%s]",
++                   pam_strerror(pamh, ret)));
++                goto done;
++            }
++
++            ret = pam_get_item(pamh, PAM_USER, (const void **)&(pi->pam_user));
++            if (ret != PAM_SUCCESS) {
++                D(("Failed to get PAM_USER with user name hint [%s]",
++                   pam_strerror(pamh, ret)));
++                goto done;
++            }
++
++            pi->pam_user_size = strlen(pi->pam_user) + 1;
++        }
++    } else {
++        ret = do_pam_conversation(pamh, PAM_PROMPT_ECHO_OFF, prompt, NULL,
++                                  &answer);
++        free(prompt);
++        if (ret != PAM_SUCCESS) {
++            D(("do_pam_conversation failed."));
++            return ret;
++        }
+     }
+ 
+     if (answer == NULL) {
+@@ -1552,6 +1641,20 @@ done:
+     free(answer);
+     answer=NULL;
+ 
++    if (resp != NULL) {
++        if (resp[0].resp != NULL) {
++            _pam_overwrite((void *)resp[0].resp);
++            free(resp[0].resp);
++        }
++        if (resp[1].resp != NULL) {
++            _pam_overwrite((void *)resp[1].resp);
++            free(resp[1].resp);
++        }
++
++        free(resp);
++        resp = NULL;
++    }
++
+     return ret;
+ }
+ 
+@@ -1680,7 +1783,7 @@ static int get_authtok_for_authentication(pam_handle_t *pamh,
+                 ret = prompt_2fa(pamh, pi, _("First Factor: "),
+                                  _("Second Factor: "));
+             }
+-        } else if (pi->cert_user != NULL) {
++        } else if (pi->token_name != NULL && *(pi->token_name) != '\0') {
+             ret = prompt_sc_pin(pamh, pi);
+         } else {
+             ret = prompt_password(pamh, pi, _("Password: "));
+diff --git a/src/sss_client/sss_cli.h b/src/sss_client/sss_cli.h
+index 59fee7a4eceb2c185e156e812af7f2f4c6b2a0dd..d4198407f2f86c6594aee6a2a43775e429692df0 100644
+--- a/src/sss_client/sss_cli.h
++++ b/src/sss_client/sss_cli.h
+@@ -427,7 +427,13 @@ enum response_type {
+                           * @param Three zero terminated strings, if one of the
+                           * strings is missing the message will contain only
+                           * an empty string (\0) for that component. */
+-    SSS_PAM_CERT_INFO,
++    SSS_PAM_CERT_INFO,   /**< A message indicating that Smartcard/certificate
++                          * based authentication is available and contains
++                          * details about the found Smartcard.
++                          * @param user name, zero terminated
++                          * @param token name, zero terminated
++                          * @param PKCS#11 module name, zero terminated
++                          * @param key id, zero terminated */
+     SSS_OTP,             /**< Indicates that the autotok was a OTP, so don't
+                           * cache it. There is no message.
+                           * @param None. */
+@@ -442,6 +448,9 @@ enum response_type {
+                               * be used together with other prompting options
+                               * to determine the type of prompting.
+                               * @param None. */
++    SSS_PAM_CERT_INFO_WITH_HINT, /**< Same as SSS_PAM_CERT_INFO but user name
++                                  * might be missing and should be prompted
++                                  * for. */
+ };
+ 
+ /**
+-- 
+2.9.4
+

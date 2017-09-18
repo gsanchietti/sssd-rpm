@@ -1,0 +1,27 @@
+From ab8afcc8befcfa436008da41944cf258513631e6 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Michal=20=C5=BDidek?= <mzidek@redhat.com>
+Date: Wed, 7 Jun 2017 14:37:42 +0200
+Subject: [PATCH 185/186] GPO: Fix typo in DEBUG message
+
+Reviewed-by: Jakub Hrozek <jhrozek@redhat.com>
+(cherry picked from commit b1d34059533eb50f6e5a4ac7b6fa1bb6fa60a445)
+---
+ src/providers/ad/ad_gpo.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/providers/ad/ad_gpo.c b/src/providers/ad/ad_gpo.c
+index a8196b4d637eff86a01b342821592bffc214f1ab..2ee284bdc71fcec1c73997f785f7c2c7f387f0b3 100644
+--- a/src/providers/ad/ad_gpo.c
++++ b/src/providers/ad/ad_gpo.c
+@@ -2110,7 +2110,7 @@ ad_gpo_process_gpo_done(struct tevent_req *subreq)
+                                      &state->num_dacl_filtered_gpos);
+     if (ret != EOK) {
+         DEBUG(SSSDBG_OP_FAILURE,
+-              "Unable to filter GPO list by DACKL: [%d](%s)\n",
++              "Unable to filter GPO list by DACL: [%d](%s)\n",
+               ret, sss_strerror(ret));
+         goto done;
+     }
+-- 
+2.9.4
+

@@ -1,0 +1,80 @@
+From b818bb3f27ce672df0a6cadf2fd90716d2a576dc Mon Sep 17 00:00:00 2001
+From: Justin Stephenson <jstephen@redhat.com>
+Date: Wed, 26 Apr 2017 15:45:33 -0400
+Subject: [PATCH 122/127] DP: Reduce Data Provider log level noise
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Certain operations are not supported with certain providers
+causing informational Data Provider log messages to be logged as
+errors or failures. This patch lowers the log level to reduce overall
+log noise and ensure only critical log messages are logged when
+a low debug_level value is used.
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/3287
+https://pagure.io/SSSD/sssd/issue/3278
+
+Reviewed-by: Fabiano Fidêncio <fidencio@redhat.com>
+Reviewed-by: Pavel Březina <pbrezina@redhat.com>
+(cherry picked from commit e98d085b529e0ae5e07a717ce3b30f3943be0ee0)
+---
+ src/providers/data_provider/dp_methods.c |  2 +-
+ src/providers/data_provider/dp_targets.c |  2 +-
+ src/responder/common/responder_dp.c      | 13 +++++++++++--
+ 3 files changed, 13 insertions(+), 4 deletions(-)
+
+diff --git a/src/providers/data_provider/dp_methods.c b/src/providers/data_provider/dp_methods.c
+index 498676d1bec2da300ca4b33f7110debcbf0aac00..9e49c5f5d65b869b3699fdc682a535e0111b6fd4 100644
+--- a/src/providers/data_provider/dp_methods.c
++++ b/src/providers/data_provider/dp_methods.c
+@@ -109,7 +109,7 @@ errno_t dp_find_method(struct data_provider *provider,
+     }
+ 
+     if (!dp_target_initialized(provider->targets, target)) {
+-        DEBUG(SSSDBG_CRIT_FAILURE, "Target [%s] is not initialized\n",
++        DEBUG(SSSDBG_CONF_SETTINGS, "Target [%s] is not initialized\n",
+               dp_target_to_string(target));
+         return ERR_MISSING_DP_TARGET;
+     }
+diff --git a/src/providers/data_provider/dp_targets.c b/src/providers/data_provider/dp_targets.c
+index 26d20a8ef79b80d56df76d7a73ec8e63d001ecbc..e2a45bbac969ca7b9b13729f26b8cded8ab7eebc 100644
+--- a/src/providers/data_provider/dp_targets.c
++++ b/src/providers/data_provider/dp_targets.c
+@@ -284,7 +284,7 @@ static errno_t dp_target_init(struct be_ctx *be_ctx,
+     if (!target->explicitly_configured && (ret == ELIBBAD || ret == ENOTSUP)) {
+         /* Target not found but it wasn't explicitly
+          * configured so we shall just continue. */
+-        DEBUG(SSSDBG_CRIT_FAILURE, "Target [%s] is not supported by "
++        DEBUG(SSSDBG_CONF_SETTINGS, "Target [%s] is not supported by "
+               "module [%s].\n", target->name, target->module_name);
+         ret = EOK;
+         goto done;
+diff --git a/src/responder/common/responder_dp.c b/src/responder/common/responder_dp.c
+index 080f70fd5945ffd234e0ef226d8139df071c4752..a75a611960801f5f5bdc95f00aea9ab921e8e293 100644
+--- a/src/responder/common/responder_dp.c
++++ b/src/responder/common/responder_dp.c
+@@ -218,8 +218,17 @@ static int sss_dp_get_reply(DBusPendingCall *pending,
+             err = ETIME;
+             goto done;
+         }
+-        DEBUG(SSSDBG_FATAL_FAILURE,"The Data Provider returned an error [%s]\n",
+-                 dbus_message_get_error_name(reply));
++
++        if (strcmp(dbus_message_get_error_name(reply),
++                   SBUS_ERROR_DP_NOTSUP) == 0) {
++            DEBUG(SSSDBG_CONF_SETTINGS,
++                  "Data Provider does not support this operation.\n");
++        } else {
++            DEBUG(SSSDBG_FATAL_FAILURE,
++                  "The Data Provider returned an error [%s]\n",
++                  dbus_message_get_error_name(reply));
++        }
++
+         /* Falling through to default intentionally*/
+         SSS_ATTRIBUTE_FALLTHROUGH;
+     default:
+-- 
+2.9.3
+

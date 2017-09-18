@@ -1,0 +1,279 @@
+From 48b30d5a62e6af3d1f2b28eac3a2d39efa4349f1 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Fabiano=20Fid=C3=AAncio?= <fidencio@redhat.com>
+Date: Mon, 19 Jun 2017 09:05:00 +0200
+Subject: [PATCH 183/186] RESPONDER: Use fqnames as output when needed
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As some regressions have been caused by not handling properly naming
+conflicts when using shortnames, last explicitly use fully qualified
+names as output in the following situations:
+- domain resolution order is set;
+- a trusted domain has been using `use_fully_qualified_name = false`
+
+In both cases we want to ensure that even handling shortnames as input,
+the output will always be fully qualified.
+
+As part of this patch, our tests ended up being modified to reflect the
+changes done. In other words, the tests related to shortnames now return
+expect as return a fully qualified name for trusted domains.
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/3403
+
+Signed-off-by: Fabiano Fidêncio <fidencio@redhat.com>
+
+Reviewed-by: Jakub Hrozek <jhrozek@redhat.com>
+(cherry picked from commit 86526891366c4bc3e1ee861143b736d2670a6ba8)
+---
+ src/confdb/confdb.h                               |   1 +
+ src/db/sysdb_subdomains.c                         |   7 ++
+ src/responder/common/cache_req/cache_req_domain.c |  14 +++
+ src/responder/common/cache_req/cache_req_domain.h |   8 ++
+ src/tests/cmocka/test_nss_srv.c                   | 104 +++++++++-------------
+ src/util/usertools.c                              |   2 +-
+ 6 files changed, 72 insertions(+), 64 deletions(-)
+
+diff --git a/src/confdb/confdb.h b/src/confdb/confdb.h
+index 797353141edcccbf3341d161ca598c99492e54fe..32a422155abef428e8a75fc83a5fe14620c7028e 100644
+--- a/src/confdb/confdb.h
++++ b/src/confdb/confdb.h
+@@ -291,6 +291,7 @@ struct sss_domain_info {
+     bool enumerate;
+     char **sd_enumerate;
+     bool fqnames;
++    bool output_fqnames;
+     bool mpg;
+     bool ignore_group_members;
+     uint32_t id_min;
+diff --git a/src/db/sysdb_subdomains.c b/src/db/sysdb_subdomains.c
+index e2a4f7bb1fcdf20b6b7e04efc7f396d1c3d08f0f..2789cc4949fb7be9ad272d7613ed18a64fa8a20a 100644
+--- a/src/db/sysdb_subdomains.c
++++ b/src/db/sysdb_subdomains.c
+@@ -129,6 +129,13 @@ struct sss_domain_info *new_subdomain(TALLOC_CTX *mem_ctx,
+     dom->mpg = mpg;
+     dom->state = DOM_ACTIVE;
+ 
++    /* use fully qualified names as output in order to avoid causing
++     * conflicts with users who have the same name and either the
++     * shortname user resolution is enabled or the trusted domain has
++     * been explicitly set to use non-fully qualified names as input.
++     */
++    dom->output_fqnames = true;
++
+     /* If the parent domain filters out group members, the subdomain should
+      * as well if configured */
+     inherit_option = string_in_list(CONFDB_DOMAIN_IGNORE_GROUP_MEMBERS,
+diff --git a/src/responder/common/cache_req/cache_req_domain.c b/src/responder/common/cache_req/cache_req_domain.c
+index 2c238c9966d322bb542fa2047313ee9e5144edee..b5f7f6c2ffabdbd92ee46b3020cee6ef7fec32d8 100644
+--- a/src/responder/common/cache_req/cache_req_domain.c
++++ b/src/responder/common/cache_req/cache_req_domain.c
+@@ -136,6 +136,12 @@ cache_req_domain_new_list_from_string_list(TALLOC_CTX *mem_ctx,
+                 cr_domain->fqnames =
+                     cache_req_domain_use_fqnames(dom, enforce_non_fqnames);
+ 
++                /* when using the domain resolution order, using shortnames as
++                 * input is allowed by default. However, we really want to use
++                 * the fully qualified name as output in order to avoid
++                 * conflicts whith users who have the very same name. */
++                cr_domain->domain->output_fqnames = true;
++
+                 DLIST_ADD_END(cr_domains, cr_domain,
+                               struct cache_req_domain *);
+                 break;
+@@ -159,6 +165,14 @@ cache_req_domain_new_list_from_string_list(TALLOC_CTX *mem_ctx,
+         cr_domain->fqnames =
+             cache_req_domain_use_fqnames(dom, enforce_non_fqnames);
+ 
++        /* when using the domain resolution order, using shortnames as input
++         * is allowed by default. However, we really want to use the fully
++         * qualified name as output in order to avoid conflicts whith users
++         * who have the very same name. */
++        if (resolution_order != NULL) {
++            cr_domain->domain->output_fqnames = true;
++        }
++
+         DLIST_ADD_END(cr_domains, cr_domain, struct cache_req_domain *);
+     }
+ 
+diff --git a/src/responder/common/cache_req/cache_req_domain.h b/src/responder/common/cache_req/cache_req_domain.h
+index 5bcbb9b493caf05bf71aac5cf7633ded91f22e73..3780a5d8d88d76e100738d28d1dd0e697edf5eae 100644
+--- a/src/responder/common/cache_req/cache_req_domain.h
++++ b/src/responder/common/cache_req/cache_req_domain.h
+@@ -35,6 +35,14 @@ struct cache_req_domain *
+ cache_req_domain_get_domain_by_name(struct cache_req_domain *domains,
+                                     const char *name);
+ 
++/*
++ * This function may have a side effect of setting the output_fqnames' domain
++ * property when it's called.
++ *
++ * It happens as the output_fqnames' domain property must only be set depending
++ * on whether a domain resolution order is set or not, and the saner place to
++ * set it to all domains is when flattening those (thus, in this function).
++ */
+ errno_t
+ cache_req_domain_new_list_from_domain_resolution_order(
+                                         TALLOC_CTX *mem_ctx,
+diff --git a/src/tests/cmocka/test_nss_srv.c b/src/tests/cmocka/test_nss_srv.c
+index 03b5bcc302322551a32f5b8cfe4b7698947abbe7..ccedf96beaecfaa4232bbe456d5e5a8394098483 100644
+--- a/src/tests/cmocka/test_nss_srv.c
++++ b/src/tests/cmocka/test_nss_srv.c
+@@ -1648,29 +1648,23 @@ static int test_nss_getgrnam_members_check_subdom(uint32_t status,
+     tmp_ctx = talloc_new(nss_test_ctx);
+     assert_non_null(tmp_ctx);
+ 
+-    if (nss_test_ctx->subdom->fqnames) {
+-        exp_members[0] = sss_tc_fqname(tmp_ctx,
+-                                       nss_test_ctx->subdom->names,
+-                                       nss_test_ctx->subdom,
+-                                       submember1.pw_name);
+-        assert_non_null(exp_members[0]);
++    exp_members[0] = sss_tc_fqname(tmp_ctx,
++                                   nss_test_ctx->subdom->names,
++                                   nss_test_ctx->subdom,
++                                   submember1.pw_name);
++    assert_non_null(exp_members[0]);
+ 
+-        exp_members[1] = sss_tc_fqname(tmp_ctx,
+-                                       nss_test_ctx->subdom->names,
+-                                       nss_test_ctx->subdom,
+-                                       submember2.pw_name);
+-        assert_non_null(exp_members[1]);
++    exp_members[1] = sss_tc_fqname(tmp_ctx,
++                                   nss_test_ctx->subdom->names,
++                                   nss_test_ctx->subdom,
++                                   submember2.pw_name);
++    assert_non_null(exp_members[1]);
+ 
+-        expected.gr_name = sss_tc_fqname(tmp_ctx,
+-                                         nss_test_ctx->subdom->names,
+-                                         nss_test_ctx->subdom,
+-                                         testsubdomgroup.gr_name);
+-        assert_non_null(expected.gr_name);
+-    } else {
+-        exp_members[0] = submember1.pw_name;
+-        exp_members[1] = submember2.pw_name;
+-        expected.gr_name = testsubdomgroup.gr_name;
+-    }
++    expected.gr_name = sss_tc_fqname(tmp_ctx,
++                                     nss_test_ctx->subdom->names,
++                                     nss_test_ctx->subdom,
++                                     testsubdomgroup.gr_name);
++    assert_non_null(expected.gr_name);
+ 
+     assert_int_equal(status, EOK);
+ 
+@@ -1744,15 +1738,11 @@ static int test_nss_getgrnam_check_mix_dom(uint32_t status,
+     tmp_ctx = talloc_new(nss_test_ctx);
+     assert_non_null(tmp_ctx);
+ 
+-    if (nss_test_ctx->subdom->fqnames) {
+-        exp_members[0] = sss_tc_fqname(tmp_ctx,
+-                                       nss_test_ctx->subdom->names,
+-                                       nss_test_ctx->subdom,
+-                                       submember1.pw_name);
+-        assert_non_null(exp_members[0]);
+-    } else {
+-        exp_members[0] = submember1.pw_name;
+-    }
++    exp_members[0] = sss_tc_fqname(tmp_ctx,
++                                   nss_test_ctx->subdom->names,
++                                   nss_test_ctx->subdom,
++                                   submember1.pw_name);
++    assert_non_null(exp_members[0]);
+     exp_members[1] = testmember1.pw_name;
+     exp_members[2] = testmember2.pw_name;
+ 
+@@ -1840,15 +1830,12 @@ static int test_nss_getgrnam_check_mix_dom_fqdn(uint32_t status,
+     tmp_ctx = talloc_new(nss_test_ctx);
+     assert_non_null(tmp_ctx);
+ 
+-    if (nss_test_ctx->subdom->fqnames) {
+-        exp_members[0] = sss_tc_fqname(tmp_ctx,
+-                                       nss_test_ctx->subdom->names,
+-                                       nss_test_ctx->subdom,
+-                                       submember1.pw_name);
+-        assert_non_null(exp_members[0]);
+-    } else {
+-        exp_members[0] = submember1.pw_name;
+-    }
++    exp_members[0] = sss_tc_fqname(tmp_ctx,
++                                   nss_test_ctx->subdom->names,
++                                   nss_test_ctx->subdom,
++                                   submember1.pw_name);
++    assert_non_null(exp_members[0]);
++
+     if (nss_test_ctx->tctx->dom->fqnames) {
+         exp_members[1] = sss_tc_fqname(tmp_ctx, nss_test_ctx->tctx->dom->names,
+                                        nss_test_ctx->tctx->dom, testmember1.pw_name);
+@@ -1961,37 +1948,28 @@ static int test_nss_getgrnam_check_mix_subdom(uint32_t status,
+     tmp_ctx = talloc_new(nss_test_ctx);
+     assert_non_null(tmp_ctx);
+ 
+-    if (nss_test_ctx->subdom->fqnames) {
+-        exp_members[0] = sss_tc_fqname(tmp_ctx,
+-                                       nss_test_ctx->subdom->names,
+-                                       nss_test_ctx->subdom,
+-                                       submember1.pw_name);
+-        assert_non_null(exp_members[0]);
++    exp_members[0] = sss_tc_fqname(tmp_ctx,
++                                   nss_test_ctx->subdom->names,
++                                   nss_test_ctx->subdom,
++                                   submember1.pw_name);
++    assert_non_null(exp_members[0]);
+ 
+-        exp_members[1] = sss_tc_fqname(tmp_ctx,
+-                                       nss_test_ctx->subdom->names,
+-                                       nss_test_ctx->subdom,
+-                                       submember2.pw_name);
+-        assert_non_null(exp_members[1]);
+-    } else {
+-        exp_members[0] = submember1.pw_name;
+-        exp_members[1] = submember2.pw_name;
+-    }
++    exp_members[1] = sss_tc_fqname(tmp_ctx,
++                                   nss_test_ctx->subdom->names,
++                                   nss_test_ctx->subdom,
++                                   submember2.pw_name);
++    assert_non_null(exp_members[1]);
+ 
+     /* Important: this member is from a non-qualified domain, so his name will
+      * not be qualified either
+      */
+     exp_members[2] = testmember1.pw_name;
+ 
+-    if (nss_test_ctx->subdom->fqnames) {
+-        expected.gr_name = sss_tc_fqname(tmp_ctx,
+-                                         nss_test_ctx->subdom->names,
+-                                         nss_test_ctx->subdom,
+-                                         testsubdomgroup.gr_name);
+-        assert_non_null(expected.gr_name);
+-    } else {
+-        expected.gr_name = testsubdomgroup.gr_name;
+-    }
++    expected.gr_name = sss_tc_fqname(tmp_ctx,
++                                     nss_test_ctx->subdom->names,
++                                     nss_test_ctx->subdom,
++                                     testsubdomgroup.gr_name);
++    assert_non_null(expected.gr_name);
+ 
+     assert_int_equal(status, EOK);
+ 
+diff --git a/src/util/usertools.c b/src/util/usertools.c
+index 5dfe6d7765b8032c7447de75e10c6c2a1d4c49ec..83131da1cac25e60a5ec3fffa995a545673e53b9 100644
+--- a/src/util/usertools.c
++++ b/src/util/usertools.c
+@@ -867,7 +867,7 @@ int sss_output_fqname(TALLOC_CTX *mem_ctx,
+         goto done;
+     }
+ 
+-    if (domain->fqnames) {
++    if (domain->output_fqnames || domain->fqnames) {
+         output_name = sss_tc_fqname(tmp_ctx, domain->names,
+                                     domain, output_name);
+         if (output_name == NULL) {
+-- 
+2.9.4
+

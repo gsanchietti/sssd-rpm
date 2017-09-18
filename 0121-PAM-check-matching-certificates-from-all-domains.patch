@@ -1,0 +1,116 @@
+From 52514960f5b0609cd9f31f3c4455b61fbe4c04c5 Mon Sep 17 00:00:00 2001
+From: Sumit Bose <sbose@redhat.com>
+Date: Wed, 26 Apr 2017 17:16:19 +0200
+Subject: [PATCH 121/121] PAM: check matching certificates from all domains
+
+Although the cache_req lookup found matching in multiple domains only
+the results from the first domain were used. With this patch the results
+from all domains are checked.
+
+Resolves https://pagure.io/SSSD/sssd/issue/3385
+
+Reviewed-by: Jakub Hrozek <jhrozek@redhat.com>
+(cherry picked from commit 92d8b072f8c521e1b4effe109b5caedabd36ed6f)
+---
+ src/responder/pam/pamsrv_cmd.c | 69 ++++++++++++++++++++++++++++++++++++++----
+ 1 file changed, 63 insertions(+), 6 deletions(-)
+
+diff --git a/src/responder/pam/pamsrv_cmd.c b/src/responder/pam/pamsrv_cmd.c
+index f2b3c74b483e527932dda42279d14a9ac184b475..10a178f839ec011c09a6da4575efbb026f3f7700 100644
+--- a/src/responder/pam/pamsrv_cmd.c
++++ b/src/responder/pam/pamsrv_cmd.c
+@@ -1352,15 +1352,71 @@ done:
+     pam_check_user_done(preq, ret);
+ }
+ 
++static errno_t get_results_from_all_domains(TALLOC_CTX *mem_ctx,
++                                            struct cache_req_result **results,
++                                            struct ldb_result **ldb_results)
++{
++    int ret;
++    size_t count = 0;
++    size_t c;
++    size_t d;
++    size_t r = 0;
++    struct ldb_result *res;
++
++    for (d = 0; results != NULL && results[d] != NULL; d++) {
++        count += results[d]->count;
++    }
++
++    res = talloc_zero(mem_ctx, struct ldb_result);
++    if (res == NULL) {
++        DEBUG(SSSDBG_OP_FAILURE, "talloc_zero failed.\n");
++        return ENOMEM;
++    }
++
++    if (count == 0) {
++        *ldb_results = res;
++        return EOK;
++    }
++
++    res->msgs = talloc_zero_array(res, struct ldb_message *, count);
++    if (res->msgs == NULL) {
++        DEBUG(SSSDBG_OP_FAILURE, "talloc_zero_array failed.\n");
++        return ENOMEM;
++    }
++    res->count = count;
++
++    for (d = 0; results != NULL && results[d] != NULL; d++) {
++        for (c = 0; c < results[d]->count; c++) {
++            if (r >= count) {
++                DEBUG(SSSDBG_CRIT_FAILURE,
++                      "More results found then counted before.\n");
++                ret = EINVAL;
++                goto done;
++            }
++            res->msgs[r++] = talloc_steal(res->msgs, results[d]->msgs[c]);
++        }
++    }
++
++    *ldb_results = res;
++    ret = EOK;
++
++done:
++    if (ret != EOK) {
++        talloc_free(res);
++    }
++
++    return ret;
++}
++
+ static void pam_forwarder_lookup_by_cert_done(struct tevent_req *req)
+ {
+     int ret;
+-    struct cache_req_result *result;
++    struct cache_req_result **results;
+     struct pam_auth_req *preq = tevent_req_callback_data(req,
+                                                          struct pam_auth_req);
+     const char *cert_user;
+ 
+-    ret = cache_req_user_by_cert_recv(preq, req, &result);
++    ret = cache_req_recv(preq, req, &results);
+     talloc_zfree(req);
+     if (ret != EOK && ret != ENOENT) {
+         DEBUG(SSSDBG_OP_FAILURE, "cache_req_user_by_cert request failed.\n");
+@@ -1368,12 +1424,13 @@ static void pam_forwarder_lookup_by_cert_done(struct tevent_req *req)
+     }
+ 
+     if (ret == EOK) {
+-        if (preq->domain == NULL) {
+-            preq->domain = result->domain;
++        ret = get_results_from_all_domains(preq, results,
++                                           &preq->cert_user_objs);
++        if (ret != EOK) {
++            DEBUG(SSSDBG_OP_FAILURE, "get_results_from_all_domains failed.\n");
++            goto done;
+         }
+ 
+-        preq->cert_user_objs = talloc_steal(preq, result->ldb_result);
+-
+         if (preq->pd->logon_name == NULL) {
+             if (preq->pd->cmd != SSS_PAM_PREAUTH) {
+                 DEBUG(SSSDBG_CRIT_FAILURE,
+-- 
+2.9.3
+

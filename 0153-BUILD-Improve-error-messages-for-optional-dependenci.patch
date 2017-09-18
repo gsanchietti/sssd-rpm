@@ -1,0 +1,86 @@
+From 9581287c1b5e13a38182af12328ace781957a118 Mon Sep 17 00:00:00 2001
+From: Lukas Slebodnik <lslebodn@redhat.com>
+Date: Tue, 30 May 2017 14:40:07 +0200
+Subject: [PATCH 153/160] BUILD: Improve error messages for optional
+ dependencies
+
+Reviewed-by: Jakub Hrozek <jhrozek@redhat.com>
+(cherry picked from commit 8ccc9b7c317cf5ee8f295b38bfc4c2b7d551f8f1)
+---
+ configure.ac               | 2 +-
+ contrib/sssd.spec.in       | 6 +++++-
+ src/external/libcurl.m4    | 6 +++++-
+ src/external/libjansson.m4 | 5 +++--
+ 4 files changed, 14 insertions(+), 5 deletions(-)
+
+diff --git a/configure.ac b/configure.ac
+index 80d8ea9ff5785b0d76edbb04f454d0dd8c8a1e6d..e8fe1d47e1803cc570295cf6512a3363e63c51c5 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -197,7 +197,6 @@ m4_include([src/external/service.m4])
+ 
+ if test x$with_secrets = xyes; then
+     m4_include([src/external/libhttp_parser.m4])
+-    m4_include([src/external/libjansson.m4])
+ fi
+ 
+ if test x$with_kcm = xyes; then
+@@ -206,6 +205,7 @@ fi
+ 
+ if test x$with_kcm = xyes -o x$with_secrets = xyes; then
+     m4_include([src/external/libcurl.m4])
++    m4_include([src/external/libjansson.m4])
+ fi
+ 
+ # This variable is defined by external/libcurl.m4, but conditionals
+diff --git a/contrib/sssd.spec.in b/contrib/sssd.spec.in
+index 39a974edebba3dbcd7625d1729b4a7330eaa8a27..b19702d091862e25bea352901b85406ccda1db65 100644
+--- a/contrib/sssd.spec.in
++++ b/contrib/sssd.spec.in
+@@ -228,10 +228,14 @@ BuildRequires: systemtap-sdt-devel
+ %endif
+ %if (0%{?with_secrets} == 1)
+ BuildRequires: http-parser-devel
+-BuildRequires: jansson-devel
+ %endif
++%if (0%{?with_kcm} == 1)
+ BuildRequires: libuuid-devel
++%endif
++%if (0%{?with_secrets} == 1 || 0%{?with_kcm} == 1)
++BuildRequires: jansson-devel
+ BuildRequires: libcurl-devel
++%endif
+ 
+ %description
+ Provides a set of daemons to manage access to remote directories and
+diff --git a/src/external/libcurl.m4 b/src/external/libcurl.m4
+index 42be308cd1e4b04e736daf887be9b75ea92db80e..94cea9ebe40f07c18452b8c2faf82e81e1dc766b 100644
+--- a/src/external/libcurl.m4
++++ b/src/external/libcurl.m4
+@@ -1,5 +1,9 @@
+ PKG_CHECK_MODULES([CURL], [libcurl], [found_libcurl=yes],
+-              [AC_MSG_ERROR([The libcurl development library was not found.])])
++              [AC_MSG_ERROR([The libcurl development library was not found.
++You must have the header file curl/curl.h installed to build sssd
++with secrets and KCM responder. If you want to build sssd without these
++responders then specify --without-secrets --without-kcm when running configure.
++])])
+ 
+ AS_IF([test x"$found_libcurl" = xyes],
+     CFLAGS="$CFLAGS $CURL_CFLAGS"
+diff --git a/src/external/libjansson.m4 b/src/external/libjansson.m4
+index 48a4a5fd8df4ac41312a596b5ebd5de7474e75f1..d87769848558efdd32325e01d8d222bb517b4c45 100644
+--- a/src/external/libjansson.m4
++++ b/src/external/libjansson.m4
+@@ -13,5 +13,6 @@ AS_IF([test x"$found_jansson" != xyes],
+                       [-L$sss_extra_libdir -ljanson])],
+         [AC_MSG_ERROR([
+ You must have the header file jansson.h installed to build sssd
+-with secrets responder. If you want to build sssd without secret responder
+-then specify --without-secrets when running configure.])])])
++with secrets and KCM responder. If you want to build sssd without these
++responders then specify --without-secrets --without-kcm when running configure.
++])])])
+-- 
+2.9.4
+

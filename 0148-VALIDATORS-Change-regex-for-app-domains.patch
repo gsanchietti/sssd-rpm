@@ -1,0 +1,36 @@
+From b32bb7226b89777063e4cd49373ce86353abd74c Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Michal=20=C5=BDidek?= <mzidek@redhat.com>
+Date: Tue, 30 May 2017 13:17:45 +0200
+Subject: [PATCH 148/152] VALIDATORS: Change regex for app domains
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Use the same restrictions for application domains that we use for
+normal domain.
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/3356
+
+Reviewed-by: Lukáš Slebodník <lslebodn@redhat.com>
+---
+ src/config/cfg_rules.ini | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/config/cfg_rules.ini b/src/config/cfg_rules.ini
+index 628f2e0e0a040bad5128d00d9348aa91170ed704..2c8c0cb98ed039c374c827775798f61369c1521e 100644
+--- a/src/config/cfg_rules.ini
++++ b/src/config/cfg_rules.ini
+@@ -13,7 +13,8 @@ section = kcm
+ section_re = ^secrets/users/[0-9]\+$
+ section_re = ^domain/[^/\@]\+$
+ section_re = ^domain/[^/\@]\+/[^/\@]\+$
+-section_re = ^application/.*$
++section_re = ^application/[^/\@]\+$
++
+ 
+ [rule/allowed_sssd_options]
+ validator = ini_allowed_options
+-- 
+2.9.4
+

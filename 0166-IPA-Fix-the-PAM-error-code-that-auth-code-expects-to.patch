@@ -1,0 +1,50 @@
+From 62cebc27bd0bdb2c12531203fd79f231e96eab7b Mon Sep 17 00:00:00 2001
+From: Sumit Bose <sbose@redhat.com>
+Date: Fri, 2 Jun 2017 11:17:18 +0200
+Subject: [PATCH 166/166] IPA: Fix the PAM error code that auth code expects to
+ start migration
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Recent patches which adds support for PKINIT in krb5_child changed a
+return code which is used to indicate to the IPA provider that password
+migration should be tried.
+
+With this patch krb5_child properly returns PAM_CRED_ERR as expected by
+the IPA provider in this case.
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/3394
+
+Reviewed-by: Simo Sorce <simo@redhat.com>
+Reviewed-by: Lukáš Slebodník <lslebodn@redhat.com>
+---
+ src/providers/krb5/krb5_child.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/src/providers/krb5/krb5_child.c b/src/providers/krb5/krb5_child.c
+index cbbc892bee0365892ac66d3654c974d325166b60..3cd8bfba76a35acd2c885ee2aac4765a6c1cc03c 100644
+--- a/src/providers/krb5/krb5_child.c
++++ b/src/providers/krb5/krb5_child.c
+@@ -1540,6 +1540,17 @@ static krb5_error_code get_and_save_tgt(struct krb5_req *kr,
+         if (kerr != 0) {
+             KRB5_CHILD_DEBUG(SSSDBG_CRIT_FAILURE, kerr);
+ 
++            /* Special case for IPA password migration */
++            if (kr->pd->cmd == SSS_PAM_AUTHENTICATE
++                    && kerr == KRB5_PREAUTH_FAILED
++                    && kr->pkinit_prompting == false
++                    && kr->password_prompting == false
++                    && kr->otp == false
++                    && sss_authtok_get_type(kr->pd->authtok)
++                            == SSS_AUTHTOK_TYPE_PASSWORD) {
++                return ERR_CREDS_INVALID;
++            }
++
+             /* If during authentication either the MIT Kerberos pkinit
+              * pre-auth module is missing or no Smartcard is inserted and only
+              * pkinit is available KRB5_PREAUTH_FAILED is returned.
+-- 
+2.9.4
+

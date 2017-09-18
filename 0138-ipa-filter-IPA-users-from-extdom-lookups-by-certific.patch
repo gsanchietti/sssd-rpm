@@ -1,0 +1,115 @@
+From e3b29c9f95d5a5ff007000b254143c337ef0b0dc Mon Sep 17 00:00:00 2001
+From: Sumit Bose <sbose@redhat.com>
+Date: Fri, 19 May 2017 12:52:47 +0200
+Subject: [PATCH 138/138] ipa: filter IPA users from extdom lookups by
+ certificate
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The extdom lookup by certificate will return the names of all matching
+users, both from the IPA and trusted domains. The IPA users from the
+list should not be looked up via the extdom plugin because they are
+already lookup up directly. Additionally the lookup might fail and cause
+an error which might prevent that the remaining users from the list are
+looked up.
+
+Resolves https://pagure.io/SSSD/sssd/issue/3407
+
+Reviewed-by: Pavel Březina <pbrezina@redhat.com>
+(cherry picked from commit eb7095099b2dd0afb1d028dbc15d8c5a897d90f8)
+---
+ src/providers/ipa/ipa_s2n_exop.c | 35 ++++++++++++++++++++++++++++++-----
+ 1 file changed, 30 insertions(+), 5 deletions(-)
+
+diff --git a/src/providers/ipa/ipa_s2n_exop.c b/src/providers/ipa/ipa_s2n_exop.c
+index f5f4401f86615dc7f81f844e1096ad43e965c384..15904e0197919c34b1bce58b4bd2c070f99b67a7 100644
+--- a/src/providers/ipa/ipa_s2n_exop.c
++++ b/src/providers/ipa/ipa_s2n_exop.c
+@@ -792,6 +792,7 @@ static errno_t s2n_response_to_attrs(TALLOC_CTX *mem_ctx,
+     char **name_list = NULL;
+     ber_len_t ber_len;
+     char *fq_name = NULL;
++    struct sss_domain_info *root_domain = NULL;
+ 
+     if (retoid == NULL || retdata == NULL) {
+         DEBUG(SSSDBG_OP_FAILURE, "Missing OID or data.\n");
+@@ -965,6 +966,8 @@ static errno_t s2n_response_to_attrs(TALLOC_CTX *mem_ctx,
+                 goto done;
+             }
+ 
++            root_domain = get_domains_head(dom);
++
+             while (ber_peek_tag(ber, &ber_len) ==  LBER_SEQUENCE) {
+                 tag = ber_scanf(ber, "{aa}", &domain_name, &name);
+                 if (tag == LBER_ERROR) {
+@@ -983,7 +986,12 @@ static errno_t s2n_response_to_attrs(TALLOC_CTX *mem_ctx,
+                 DEBUG(SSSDBG_TRACE_ALL, "[%s][%s][%s].\n", domain_name, name,
+                                                            fq_name);
+ 
+-                ret = add_string_to_list(attrs, fq_name, &name_list);
++                if (strcasecmp(root_domain->name, domain_name) != 0) {
++                    ret = add_string_to_list(attrs, fq_name, &name_list);
++                } else {
++                    DEBUG(SSSDBG_TRACE_ALL,
++                          "[%s] from root domain, skipping.\n", fq_name);
++                }
+                 ber_memfree(domain_name);
+                 ber_memfree(name);
+                 talloc_free(fq_name);
+@@ -1228,7 +1236,7 @@ static errno_t ipa_s2n_get_list_step(struct tevent_req *req)
+ 
+         break;
+     default:
+-        DEBUG(SSSDBG_OP_FAILURE, "Unexpected inoput type [%d].\n",
++        DEBUG(SSSDBG_OP_FAILURE, "Unexpected input type [%d].\n",
+                                  state->req_input.type);
+         return EINVAL;
+     }
+@@ -1247,9 +1255,10 @@ static errno_t ipa_s2n_get_list_step(struct tevent_req *req)
+ 
+     if (state->req_input.type == REQ_INP_NAME
+             && state->req_input.inp.name != NULL) {
+-        DEBUG(SSSDBG_TRACE_FUNC, "Sending request_type: [%s] for group [%s].\n",
+-                                 ipa_s2n_reqtype2str(state->request_type),
+-                                 state->list[state->list_idx]);
++        DEBUG(SSSDBG_TRACE_FUNC,
++              "Sending request_type: [%s] for object [%s].\n",
++              ipa_s2n_reqtype2str(state->request_type),
++              state->list[state->list_idx]);
+     }
+ 
+     subreq = ipa_s2n_exop_send(state, state->ev, state->sh, need_v1,
+@@ -1886,6 +1895,13 @@ static void ipa_s2n_get_user_done(struct tevent_req *subreq)
+ 
+         if (state->simple_attrs->response_type == RESP_NAME_LIST
+                 && state->req_input->type == REQ_INP_CERT) {
++
++            if (state->simple_attrs->name_list == NULL) {
++                /* No results from sub-domains, nothing to do */
++                ret = EOK;
++                goto done;
++            }
++
+             state->mapped_attrs = sysdb_new_attrs(state);
+             if (state->mapped_attrs == NULL) {
+                 DEBUG(SSSDBG_OP_FAILURE, "sysdb_new_attrs failed.\n");
+@@ -2640,6 +2656,15 @@ static void ipa_s2n_get_list_done(struct tevent_req  *subreq)
+         return;
+     }
+ 
++    if (state->attrs == NULL) {
++        /* If this is a request by certificate we are done */
++        if (state->req_input->type == REQ_INP_CERT) {
++            tevent_req_done(req);
++        } else {
++            tevent_req_error(req, EINVAL);
++        }
++    }
++
+     ret = sysdb_attrs_get_string(state->attrs->sysdb_attrs, SYSDB_SID_STR,
+                                  &sid_str);
+     if (ret == ENOENT) {
+-- 
+2.9.4
+

@@ -1,0 +1,102 @@
+From f994343e9ffc8f8d2917678ae61bcdf68c316a20 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Michal=20=C5=BDidek?= <mzidek@redhat.com>
+Date: Tue, 9 May 2017 11:21:02 +0200
+Subject: [PATCH 131/131] AD SUBDOMAINS: Fix search bases for child domains
+
+When using direct AD integration, child domains did not respect
+the sssd.conf configuration of search bases.
+
+There were few issues all of which are fixed in this small
+patch.
+
+First problem was that the sdap domain list was not properly
+inherited from the parent in the child domains and the children
+always created their own sdap domains lists that were disconnected
+from the parent context and never used.
+
+Second issue was that the child domain did not call the function
+to reinit the search bases after the sdap_domain was added to the
+list of sdap domains. This caused that child domains always used
+automatically detected search bases and never used the configured
+ones even though they were properly read into the ID options
+context attached to the subdomain.
+
+Also there has been an issue that the sdap search bases
+were rewritten by the new child domain initialization
+(this only happened with more than one child domain)
+because the sdap domain list was 'updated' every time
+a new child domain was initialized, which caused that
+only the main domain and the last child domain had proper
+search bases, the others only the auto-discovered ones
+(because they were overwritten with the 'update').
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/3397
+
+Reviewed-by: Sumit Bose <sbose@redhat.com>
+---
+ src/providers/ad/ad_subdomains.c | 17 +++++++++++++++++
+ src/providers/ldap/sdap_domain.c |  5 +++++
+ 2 files changed, 22 insertions(+)
+
+diff --git a/src/providers/ad/ad_subdomains.c b/src/providers/ad/ad_subdomains.c
+index ef166446e837c3f7cd824c1abf4b5cc587aec9da..c9b79dd9d6840802cddc067eef9d5110cf8d0778 100644
+--- a/src/providers/ad/ad_subdomains.c
++++ b/src/providers/ad/ad_subdomains.c
+@@ -221,6 +221,9 @@ ad_subdom_ad_ctx_new(struct be_ctx *be_ctx,
+     ad_id_ctx->sdap_id_ctx->opts = ad_options->id;
+     ad_options->id_ctx = ad_id_ctx;
+ 
++    /* We need to pass the sdap list from parent */
++    ad_id_ctx->sdap_id_ctx->opts->sdom = id_ctx->sdap_id_ctx->opts->sdom;
++
+     /* use AD plugin */
+     srv_ctx = ad_srv_plugin_ctx_init(be_ctx, be_ctx->be_res,
+                                      default_host_dbs,
+@@ -257,6 +260,13 @@ ad_subdom_ad_ctx_new(struct be_ctx *be_ctx,
+     ad_id_ctx->sdap_id_ctx->opts->idmap_ctx =
+         id_ctx->sdap_id_ctx->opts->idmap_ctx;
+ 
++    ret = ad_set_search_bases(ad_options->id, sdom);
++    if (ret != EOK) {
++        DEBUG(SSSDBG_MINOR_FAILURE, "Failed to set LDAP search bases for "
++              "domain '%s'. Will try to use automatically detected search "
++              "bases.", subdom->name);
++    }
++
+     *_subdom_id_ctx = ad_id_ctx;
+     return EOK;
+ }
+@@ -621,6 +631,13 @@ ads_store_sdap_subdom(struct ad_subdomains_ctx *ctx,
+         return ret;
+     }
+ 
++    ret = ad_set_search_bases(ctx->ad_id_ctx->ad_options->id, ctx->sdom);
++    if (ret != EOK) {
++        DEBUG(SSSDBG_MINOR_FAILURE, "failed to set ldap search bases for "
++              "domain '%s'. will try to use automatically detected search "
++              "bases.", ctx->sdom->dom->name);
++    }
++
+     DLIST_FOR_EACH(sditer, ctx->sdom) {
+         if (IS_SUBDOMAIN(sditer->dom) && sditer->pvt == NULL) {
+             ret = ad_subdom_ad_ctx_new(ctx->be_ctx, ctx->ad_id_ctx,
+diff --git a/src/providers/ldap/sdap_domain.c b/src/providers/ldap/sdap_domain.c
+index 5cba9df0fd5fb320a57adc39093283aed865f57f..d384b2e4a0ec3a7c8d0b05e0ce735feb2189085f 100644
+--- a/src/providers/ldap/sdap_domain.c
++++ b/src/providers/ldap/sdap_domain.c
+@@ -154,6 +154,11 @@ sdap_domain_subdom_add(struct sdap_id_ctx *sdap_id_ctx,
+                     parent->name, ret, strerror(ret));
+                 return ret;
+             }
++        } else if (sditer->search_bases != NULL) {
++            DEBUG(SSSDBG_TRACE_FUNC,
++                  "subdomain %s has already initialized search bases\n",
++                  dom->name);
++            continue;
+         } else {
+             sdom = sditer;
+         }
+-- 
+2.9.3
+

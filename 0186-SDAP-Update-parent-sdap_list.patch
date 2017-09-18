@@ -1,0 +1,97 @@
+From 69b69d84ca9fd3453fa83281fc90e34f413a32f9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Michal=20=C5=BDidek?= <mzidek@redhat.com>
+Date: Wed, 14 Jun 2017 19:02:10 +0200
+Subject: [PATCH 186/186] SDAP: Update parent sdap_list
+
+Update parent sdap_list with newly created subdomain sdap domain.
+
+Preiously, we inherited the parent sdap_list and used it also in the
+subdomain's context (this was introduced recently with commit
+c4ddb9ccab670f9c0d0377680237b62f9f91c496), but it caused problems
+that were difficult to debug (we somewhere rewrite part of the list
+incorrectly).
+
+This patch reverses to the previous bahavior, where every subdomain
+has it's own sdap_list, however this time the parrent domain's
+sdap_list is updated so that it has correct information about
+search bases of the child domains.
+
+We should ideally have just one sdap_list to avoid the updating
+completely, but this would require more refactoring in the sdap
+code.
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/3421
+
+Reviewed-by: Jakub Hrozek <jhrozek@redhat.com>
+(cherry picked from commit 630aea13063c4b242b3433d16ca4346a1a38429b)
+---
+ src/providers/ad/ad_subdomains.c | 38 +++++++++++++++++++++++++++++++++++---
+ 1 file changed, 35 insertions(+), 3 deletions(-)
+
+diff --git a/src/providers/ad/ad_subdomains.c b/src/providers/ad/ad_subdomains.c
+index c9b79dd9d6840802cddc067eef9d5110cf8d0778..e35041c5ad73cb0fcaaaad96333fc17dd3a17638 100644
+--- a/src/providers/ad/ad_subdomains.c
++++ b/src/providers/ad/ad_subdomains.c
+@@ -141,6 +141,35 @@ static bool is_domain_enabled(const char *domain,
+ }
+ 
+ static errno_t
++update_parent_sdap_list(struct sdap_domain *parent_list,
++                        struct sdap_domain *child_sdap)
++{
++    struct sdap_domain *sditer;
++
++    DLIST_FOR_EACH(sditer, parent_list) {
++        if (sditer->dom == child_sdap->dom) {
++            break;
++        }
++    }
++
++    if (sditer == NULL) {
++        /* Nothing to do */
++        return EOK;
++    }
++
++    /* Update the search bases */
++    sditer->search_bases = child_sdap->search_bases;
++    sditer->user_search_bases = child_sdap->user_search_bases;
++    sditer->group_search_bases = child_sdap->group_search_bases;
++    sditer->netgroup_search_bases = child_sdap->netgroup_search_bases;
++    sditer->sudo_search_bases = child_sdap->sudo_search_bases;
++    sditer->service_search_bases = child_sdap->service_search_bases;
++    sditer->autofs_search_bases = child_sdap->autofs_search_bases;
++
++    return EOK;
++}
++
++static errno_t
+ ad_subdom_ad_ctx_new(struct be_ctx *be_ctx,
+                      struct ad_id_ctx *id_ctx,
+                      struct sss_domain_info *subdom,
+@@ -221,9 +250,6 @@ ad_subdom_ad_ctx_new(struct be_ctx *be_ctx,
+     ad_id_ctx->sdap_id_ctx->opts = ad_options->id;
+     ad_options->id_ctx = ad_id_ctx;
+ 
+-    /* We need to pass the sdap list from parent */
+-    ad_id_ctx->sdap_id_ctx->opts->sdom = id_ctx->sdap_id_ctx->opts->sdom;
+-
+     /* use AD plugin */
+     srv_ctx = ad_srv_plugin_ctx_init(be_ctx, be_ctx->be_res,
+                                      default_host_dbs,
+@@ -267,6 +293,12 @@ ad_subdom_ad_ctx_new(struct be_ctx *be_ctx,
+               "bases.", subdom->name);
+     }
+ 
++    ret = update_parent_sdap_list(id_ctx->sdap_id_ctx->opts->sdom,
++                                  sdom);
++    if (ret != EOK) {
++        return ret;
++    }
++
+     *_subdom_id_ctx = ad_id_ctx;
+     return EOK;
+ }
+-- 
+2.9.4
+

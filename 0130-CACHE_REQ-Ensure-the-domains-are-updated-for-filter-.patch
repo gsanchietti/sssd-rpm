@@ -1,0 +1,163 @@
+From 1a89fc33d1b9b1070c7ab83fb0314e538ac46736 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Fabiano=20Fid=C3=AAncio?= <fidencio@redhat.com>
+Date: Wed, 3 May 2017 13:24:40 +0200
+Subject: [PATCH 2/2] CACHE_REQ: Ensure the domains are updated for "filter"
+ related calls
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+As contacting the infopipe responder on a "filter" related call may lead
+to the situation where the cr_domains' list is not populated yet (as the
+domains and subdomains lists from the data provider are not processed
+yet), let's explicitly call sss_dp_get_domains() for those cases and
+avoid returning a wrong result to the caller.
+
+This situation may happen only because the schedule_get_domains_task(),
+that's called when the infopipe responder is initialized, may take some
+time to run/finish.
+
+While I'm not exactly sure whether it's the best solution to avoid the
+"race", it seems to be sane enough to avoid the issues.
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/3387
+
+Signed-off-by: Fabiano Fidêncio <fidencio@redhat.com>
+Reviewed-by: Sumit Bose <sbose@redhat.com>
+Reviewed-by: Pavel Březina <pbrezina@redhat.com>
+---
+ src/responder/common/cache_req/cache_req.c | 86 ++++++++++++++++++++++++++++--
+ 1 file changed, 81 insertions(+), 5 deletions(-)
+
+diff --git a/src/responder/common/cache_req/cache_req.c b/src/responder/common/cache_req/cache_req.c
+index 797325a30e6c1ed5f1d4b4c147c65391d5204b52..7d77eb7dd72a7ccf3d687eee8f746ab84176b487 100644
+--- a/src/responder/common/cache_req/cache_req.c
++++ b/src/responder/common/cache_req/cache_req.c
+@@ -698,6 +698,13 @@ static errno_t cache_req_process_input(TALLOC_CTX *mem_ctx,
+                                        struct cache_req *cr,
+                                        const char *domain);
+ 
++static errno_t cache_req_update_domains(TALLOC_CTX *mem_ctx,
++                                        struct tevent_req *req,
++                                        struct cache_req *cr,
++                                        const char *domain);
++
++static void cache_req_domains_updated(struct tevent_req *subreq);
++
+ static void cache_req_input_parsed(struct tevent_req *subreq);
+ 
+ static errno_t cache_req_select_domains(struct tevent_req *req,
+@@ -753,13 +760,13 @@ struct tevent_req *cache_req_send(TALLOC_CTX *mem_ctx,
+         goto done;
+     }
+ 
++    state->domain_name = domain;
+     ret = cache_req_process_input(state, req, cr, domain);
+     if (ret != EOK) {
+         goto done;
+     }
+ 
+-    state->domain_name = domain;
+-    ret = cache_req_select_domains(req, domain);
++    ret = cache_req_select_domains(req, state->domain_name);
+ 
+ done:
+     if (ret == EOK) {
+@@ -780,14 +787,25 @@ static errno_t cache_req_process_input(TALLOC_CTX *mem_ctx,
+ {
+     struct tevent_req *subreq;
+     const char *default_domain;
++    errno_t ret;
+ 
+     if (cr->data->name.input == NULL) {
+-        /* Input was not name, there is no need to process it further. */
+-        return EOK;
++        /* Call cache_req_update_domains() in order to get a up to date list
++         * of domains and subdomains, if needed. Otherwise just return EOK as
++         * the input was not a name, thus there's no need to process it
++         * further. */
++        return cache_req_update_domains(mem_ctx, req, cr, domain);
+     }
+ 
+     if (cr->plugin->parse_name == false || domain != NULL) {
+-        /* We do not want to parse the name. */
++        /* Call cache_req_update_domains() in order to get a up to date list
++         * of domains and subdomains, if needed. Otherwise, just use the input
++         * name as it is. */
++        ret = cache_req_update_domains(mem_ctx, req, cr, domain);
++        if (ret != EOK) {
++            return ret;
++        }
++
+         return cache_req_set_name(cr, cr->data->name.input);
+     }
+ 
+@@ -812,6 +830,64 @@ static errno_t cache_req_process_input(TALLOC_CTX *mem_ctx,
+     return EAGAIN;
+ }
+ 
++static errno_t cache_req_update_domains(TALLOC_CTX *mem_ctx,
++                                        struct tevent_req *req,
++                                        struct cache_req *cr,
++                                        const char *domain)
++{
++    struct tevent_req *subreq;
++
++    if (cr->rctx->get_domains_last_call.tv_sec != 0) {
++        return EOK;
++    }
++
++    subreq = sss_dp_get_domains_send(mem_ctx, cr->rctx, false, domain);
++    if (subreq == NULL) {
++        return ENOMEM;
++    }
++
++    tevent_req_set_callback(subreq, cache_req_domains_updated, req);
++    return EAGAIN;
++}
++
++static void cache_req_domains_updated(struct tevent_req *subreq)
++{
++    struct tevent_req *req;
++    struct cache_req_state *state;
++    errno_t ret;
++
++    req = tevent_req_callback_data(subreq, struct tevent_req);
++    state = tevent_req_data(req, struct cache_req_state);
++
++    ret = sss_dp_get_domains_recv(subreq);
++    talloc_free(subreq);
++    if (ret != EOK) {
++        goto done;
++    }
++
++    if (state->cr->data->name.input == NULL) {
++        /* Input was not name, there is no need to process it further. */
++        goto immediately;
++    }
++
++    if (state->cr->plugin->parse_name == false || state->domain_name != NULL) {
++        /* We do not want to parse the name. */
++        ret = cache_req_set_name(state->cr, state->cr->data->name.input);
++        if (ret != EOK) {
++            goto done;
++        }
++    }
++
++immediately:
++    ret = cache_req_select_domains(req, state->domain_name);
++
++done:
++    if (ret != EOK && ret != EAGAIN) {
++        tevent_req_error(req, ret);
++        return;
++    }
++}
++
+ static void cache_req_input_parsed(struct tevent_req *subreq)
+ {
+     struct tevent_req *req;
+-- 
+2.9.3
+

@@ -1,0 +1,53 @@
+From 6edf41eba3cec8aa40dffaf639cd5c7756db310e Mon Sep 17 00:00:00 2001
+From: Sumit Bose <sbose@redhat.com>
+Date: Wed, 10 May 2017 17:13:48 +0200
+Subject: [PATCH 160/160] sssctl: show user name used for authentication in
+ user-checks
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Since there are cases where the user name is not entered directly but
+determined by other means the user-checks should show the name of the
+user used for authentication.
+
+Related to https://pagure.io/SSSD/sssd/issue/3395
+
+Reviewed-by: Fabiano Fidêncio <fidencio@redhat.com>
+(cherry picked from commit b130adaa3934d0531aca0f32961ab8b4cc720820)
+---
+ src/tools/sssctl/sssctl_user_checks.c | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/src/tools/sssctl/sssctl_user_checks.c b/src/tools/sssctl/sssctl_user_checks.c
+index 7c7b564bd29100382c9bbef7a3131c379e9aa97e..d5cd8a1b42e84aa96df95ed39905c864a38212b7 100644
+--- a/src/tools/sssctl/sssctl_user_checks.c
++++ b/src/tools/sssctl/sssctl_user_checks.c
+@@ -200,6 +200,8 @@ errno_t sssctl_user_checks(struct sss_cmdline *cmdline,
+     const char *action = DEFAULT_ACTION;
+     const char *service = DEFAULT_SERVICE;
+     int ret;
++    int pret;
++    const char *pam_user = NULL;
+     size_t c;
+     char **pam_env;
+ 
+@@ -246,7 +248,14 @@ errno_t sssctl_user_checks(struct sss_cmdline *cmdline,
+     if ( strncmp(action, "auth", 4)== 0 ) {
+         fprintf(stdout, _("testing pam_authenticate\n\n"));
+         ret = pam_authenticate(pamh, 0);
+-        fprintf(stderr, _("pam_authenticate: %s\n\n"), pam_strerror(pamh, ret));
++        pret = pam_get_item(pamh, PAM_USER, (const void **) &pam_user);
++        if (pret != PAM_SUCCESS) {
++            fprintf(stderr, _("pam_get_item failed: %s\n"), pam_strerror(pamh,
++                                                                         pret));
++            pam_user = "- not available -";
++        }
++        fprintf(stderr, _("pam_authenticate for user [%s]: %s\n\n"), pam_user,
++                                                       pam_strerror(pamh, ret));
+     } else if ( strncmp(action, "chau", 4)== 0 ) {
+         fprintf(stdout, _("testing pam_chauthtok\n\n"));
+         ret = pam_chauthtok(pamh, 0);
+-- 
+2.9.4
+

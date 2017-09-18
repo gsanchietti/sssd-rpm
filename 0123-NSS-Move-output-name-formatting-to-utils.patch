@@ -1,0 +1,249 @@
+From 43b07b3fe8794a6e19db5cd2e9036e3d4d6c43ad Mon Sep 17 00:00:00 2001
+From: Nikolai Kondrashov <Nikolai.Kondrashov@redhat.com>
+Date: Wed, 22 Mar 2017 14:32:35 +0200
+Subject: [PATCH 123/127] NSS: Move output name formatting to utils
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Move NSS nss_get_name_from_msg and the core of sized_output_name to the
+utils to make them available to provider and other responders.
+
+Reviewed-by: Pavel Březina <pbrezina@redhat.com>
+(cherry picked from commit a012a71f21bf1a4687e58085f19c18cc5b2bbadd)
+---
+ src/responder/common/responder_common.c | 27 ++++---------
+ src/responder/nss/nss_protocol_grent.c  |  2 +-
+ src/responder/nss/nss_protocol_pwent.c  |  2 +-
+ src/responder/nss/nss_protocol_sid.c    |  2 +-
+ src/responder/nss/nss_utils.c           | 27 -------------
+ src/util/usertools.c                    | 67 +++++++++++++++++++++++++++++++++
+ src/util/util.h                         |  9 +++++
+ 7 files changed, 87 insertions(+), 49 deletions(-)
+
+diff --git a/src/responder/common/responder_common.c b/src/responder/common/responder_common.c
+index 7496d293fddb3e947d59a4f2aaeb2c83234dfcc7..9d4889be652c6d6fb974b59001a9ac77b496e9ab 100644
+--- a/src/responder/common/responder_common.c
++++ b/src/responder/common/responder_common.c
+@@ -1685,7 +1685,7 @@ int sized_output_name(TALLOC_CTX *mem_ctx,
+ {
+     TALLOC_CTX *tmp_ctx = NULL;
+     errno_t ret;
+-    char *username;
++    char *name_str;
+     struct sized_string *name;
+ 
+     tmp_ctx = talloc_new(NULL);
+@@ -1693,30 +1693,19 @@ int sized_output_name(TALLOC_CTX *mem_ctx,
+         return ENOMEM;
+     }
+ 
+-    username = sss_output_name(tmp_ctx, orig_name, name_dom->case_preserve,
+-                               rctx->override_space);
+-    if (username == NULL) {
+-        ret = EIO;
+-        goto done;
+-    }
+-
+-    if (name_dom->fqnames) {
+-        username = sss_tc_fqname(tmp_ctx, name_dom->names, name_dom, username);
+-        if (username == NULL) {
+-            DEBUG(SSSDBG_CRIT_FAILURE, "sss_replace_space failed\n");
+-            ret = EIO;
+-            goto done;
+-        }
+-    }
+-
+     name = talloc_zero(tmp_ctx, struct sized_string);
+     if (name == NULL) {
+         ret = ENOMEM;
+         goto done;
+     }
+ 
+-    to_sized_string(name, username);
+-    name->str = talloc_steal(name, username);
++    ret = sss_output_fqname(mem_ctx, name_dom, orig_name,
++                            rctx->override_space, &name_str);
++    if (ret != EOK) {
++        goto done;
++    }
++
++    to_sized_string(name, name_str);
+     *_name = talloc_steal(mem_ctx, name);
+     ret = EOK;
+ done:
+diff --git a/src/responder/nss/nss_protocol_grent.c b/src/responder/nss/nss_protocol_grent.c
+index fae1d47d7b217beafba75740e2e6d9cb8cdbc1d0..947463df93e188729959737efa4ac4f44a8459c4 100644
+--- a/src/responder/nss/nss_protocol_grent.c
++++ b/src/responder/nss/nss_protocol_grent.c
+@@ -41,7 +41,7 @@ nss_get_grent(TALLOC_CTX *mem_ctx,
+     }
+ 
+     /* Get fields. */
+-    name = nss_get_name_from_msg(domain, msg);
++    name = sss_get_name_from_msg(domain, msg);
+     gid = sss_view_ldb_msg_find_attr_as_uint64(domain, msg, SYSDB_GIDNUM, 0);
+ 
+     if (name == NULL || gid == 0) {
+diff --git a/src/responder/nss/nss_protocol_pwent.c b/src/responder/nss/nss_protocol_pwent.c
+index edda9d3c87389898435a34fe7927868bc1cd9ac5..cb643f29e2d5f0a0c55c51afd9def73813061aa7 100644
+--- a/src/responder/nss/nss_protocol_pwent.c
++++ b/src/responder/nss/nss_protocol_pwent.c
+@@ -225,7 +225,7 @@ nss_get_pwent(TALLOC_CTX *mem_ctx,
+ 
+     /* Get fields. */
+     upn = ldb_msg_find_attr_as_string(msg, SYSDB_UPN, NULL);
+-    name = nss_get_name_from_msg(domain, msg);
++    name = sss_get_name_from_msg(domain, msg);
+     gid = nss_get_gid(domain, msg);
+     uid = sss_view_ldb_msg_find_attr_as_uint64(domain, msg, SYSDB_UIDNUM, 0);
+ 
+diff --git a/src/responder/nss/nss_protocol_sid.c b/src/responder/nss/nss_protocol_sid.c
+index a6a4e27d039c67ef98f6d5900d5e3fcadb3ee717..d4b7ee22d7c68a9e6f7c668f7268cdc5f36768b3 100644
+--- a/src/responder/nss/nss_protocol_sid.c
++++ b/src/responder/nss/nss_protocol_sid.c
+@@ -532,7 +532,7 @@ nss_protocol_fill_name_list(struct nss_ctx *nss_ctx,
+             return ret;
+         }
+ 
+-        tmp_str = nss_get_name_from_msg(result->domain, result->msgs[c]);
++        tmp_str = sss_get_name_from_msg(result->domain, result->msgs[c]);
+         if (tmp_str == NULL) {
+             return EINVAL;
+         }
+diff --git a/src/responder/nss/nss_utils.c b/src/responder/nss/nss_utils.c
+index 2cd9c33b42f7e018ea89d2df206637f35646489e..b4950e5a6eaec6a4511f7251dcf2e623c0177230 100644
+--- a/src/responder/nss/nss_utils.c
++++ b/src/responder/nss/nss_utils.c
+@@ -27,33 +27,6 @@
+ #include "responder/nss/nss_private.h"
+ 
+ const char *
+-nss_get_name_from_msg(struct sss_domain_info *domain,
+-                      struct ldb_message *msg)
+-{
+-    const char *name;
+-
+-    /* If domain has a view associated we return overridden name
+-     * if possible. */
+-    if (DOM_HAS_VIEWS(domain)) {
+-        name = ldb_msg_find_attr_as_string(msg, OVERRIDE_PREFIX SYSDB_NAME,
+-                                           NULL);
+-        if (name != NULL) {
+-            return name;
+-        }
+-    }
+-
+-    /* Otherwise we try to return name override from
+-     * Default Truest View for trusted users. */
+-    name = ldb_msg_find_attr_as_string(msg, SYSDB_DEFAULT_OVERRIDE_NAME, NULL);
+-    if (name != NULL) {
+-        return name;
+-    }
+-
+-    /* If no override is found we return the original name. */
+-    return ldb_msg_find_attr_as_string(msg, SYSDB_NAME, NULL);
+-}
+-
+-const char *
+ nss_get_pwfield(struct nss_ctx *nctx,
+                struct sss_domain_info *dom)
+ {
+diff --git a/src/util/usertools.c b/src/util/usertools.c
+index 7b87c567a6c2dc7e9c267407434b2a7a9edeaa00..5dfe6d7765b8032c7447de75e10c6c2a1d4c49ec 100644
+--- a/src/util/usertools.c
++++ b/src/util/usertools.c
+@@ -816,3 +816,70 @@ done:
+     talloc_free(tmp_ctx);
+     return outname;
+ }
++
++const char *
++sss_get_name_from_msg(struct sss_domain_info *domain,
++                      struct ldb_message *msg)
++{
++    const char *name;
++
++    /* If domain has a view associated we return overridden name
++     * if possible. */
++    if (DOM_HAS_VIEWS(domain)) {
++        name = ldb_msg_find_attr_as_string(msg, OVERRIDE_PREFIX SYSDB_NAME,
++                                           NULL);
++        if (name != NULL) {
++            return name;
++        }
++    }
++
++    /* Otherwise we try to return name override from
++     * Default Truest View for trusted users. */
++    name = ldb_msg_find_attr_as_string(msg, SYSDB_DEFAULT_OVERRIDE_NAME, NULL);
++    if (name != NULL) {
++        return name;
++    }
++
++    /* If no override is found we return the original name. */
++    return ldb_msg_find_attr_as_string(msg, SYSDB_NAME, NULL);
++}
++
++int sss_output_fqname(TALLOC_CTX *mem_ctx,
++                      struct sss_domain_info *domain,
++                      const char *name,
++                      char override_space,
++                      char **_output_name)
++{
++    TALLOC_CTX *tmp_ctx = NULL;
++    errno_t ret;
++    char *output_name;
++
++    tmp_ctx = talloc_new(NULL);
++    if (tmp_ctx == NULL) {
++        ret = ENOMEM;
++        goto done;
++    }
++
++    output_name = sss_output_name(tmp_ctx, name, domain->case_preserve,
++                                  override_space);
++    if (output_name == NULL) {
++        ret = EIO;
++        goto done;
++    }
++
++    if (domain->fqnames) {
++        output_name = sss_tc_fqname(tmp_ctx, domain->names,
++                                    domain, output_name);
++        if (output_name == NULL) {
++            DEBUG(SSSDBG_CRIT_FAILURE, "sss_tc_fqname failed\n");
++            ret = EIO;
++            goto done;
++        }
++    }
++
++    *_output_name = talloc_steal(mem_ctx, output_name);
++    ret = EOK;
++done:
++    talloc_zfree(tmp_ctx);
++    return ret;
++}
+diff --git a/src/util/util.h b/src/util/util.h
+index 4ef13ced48addc19403402d7d880176da24ceec6..5ba4c36ca88e325c20a3b1ecc8080a11ca276dcf 100644
+--- a/src/util/util.h
++++ b/src/util/util.h
+@@ -304,6 +304,15 @@ char *sss_output_name(TALLOC_CTX *mem_ctx,
+                       bool case_sensitive,
+                       const char replace_space);
+ 
++int sss_output_fqname(TALLOC_CTX *mem_ctx,
++                      struct sss_domain_info *domain,
++                      const char *name,
++                      char override_space,
++                      char **_output_name);
++
++const char *sss_get_name_from_msg(struct sss_domain_info *domain,
++                                  struct ldb_message *msg);
++
+ /* from backup-file.c */
+ int backup_file(const char *src, int dbglvl);
+ 
+-- 
+2.9.3
+

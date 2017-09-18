@@ -1,0 +1,49 @@
+From 256e1b4162832570e10a85579d2b14ed7b54b7f2 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Fabiano=20Fid=C3=AAncio?= <fidencio@redhat.com>
+Date: Mon, 29 May 2017 13:29:26 +0200
+Subject: [PATCH 179/181] SYSDB_OPS: Invalidate a cache entry also in the
+ ts_cache
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Similarly to what has been in the previous commit (expiring an entry
+also in the timestamp cache), we should do the same when invalidating an
+entry.
+
+Related:
+https://pagure.io/SSSD/sssd/issue/3369
+
+Signed-off-by: Fabiano Fidêncio <fidencio@redhat.com>
+
+Reviewed-by: Jakub Hrozek <jhrozek@redhat.com>
+(cherry picked from commit a71f1a655dcc2ca6dc16bb8eb1c4c9e24cfe2c3e)
+---
+ src/db/sysdb_ops.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/src/db/sysdb_ops.c b/src/db/sysdb_ops.c
+index ae26470487f859fe1de1dc364b6a05b9793a0545..ed936f0cb1a37155aabef96db1d267eb03ec0ed9 100644
+--- a/src/db/sysdb_ops.c
++++ b/src/db/sysdb_ops.c
+@@ -5160,6 +5160,17 @@ int sysdb_invalidate_cache_entry(struct sss_domain_info *domain,
+         goto done;
+     }
+ 
++    if (sysdb->ldb_ts != NULL) {
++        ret = sysdb_set_cache_entry_attr(sysdb->ldb_ts, entry_dn,
++                                         attrs, SYSDB_MOD_REP);
++        if (ret != EOK) {
++            DEBUG(SSSDBG_MINOR_FAILURE,
++                  "Cannot set attrs in the timestamp cache for %s, %d [%s]\n",
++                  ldb_dn_get_linearized(entry_dn), ret, sss_strerror(ret));
++            /* non-fatal */
++        }
++    }
++
+     DEBUG(SSSDBG_FUNC_DATA,
+           "Cache entry [%s] has been invalidated.\n",
+           ldb_dn_get_linearized(entry_dn));
+-- 
+2.9.4
+

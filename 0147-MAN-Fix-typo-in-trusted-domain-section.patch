@@ -1,0 +1,29 @@
+From 8a6087c3b53bbe26cb212e60af74da981529f57d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Michal=20=C5=BDidek?= <mzidek@redhat.com>
+Date: Tue, 30 May 2017 12:05:39 +0200
+Subject: [PATCH 147/152] MAN: Fix typo in trusted domain section
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Reviewed-by: Lukáš Slebodník <lslebodn@redhat.com>
+---
+ src/man/sssd.conf.5.xml | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/man/sssd.conf.5.xml b/src/man/sssd.conf.5.xml
+index c4e30396f16c40db37af2f56ac218b6e37201ef7..a35f2807eac8bb89d6cb1dd0a48f738d71a7578f 100644
+--- a/src/man/sssd.conf.5.xml
++++ b/src/man/sssd.conf.5.xml
+@@ -2912,7 +2912,7 @@ ldap_user_extra_attrs = phone:telephoneNumber
+         <para>
+             Some options used in the domain section can also be used in the
+             trusted domain section, that is, in a section called
+-            <quote>[domain/<replaceable>DOMAIN_NAME</replaceable>]/<replaceable>TRUSTED_DOMAIN_NAME</replaceable>]</quote>.
++            <quote>[domain/<replaceable>DOMAIN_NAME</replaceable>/<replaceable>TRUSTED_DOMAIN_NAME</replaceable>]</quote>.
+             Currently supported options in the trusted domain section are:
+         </para>
+             <para>ldap_search_base,</para>
+-- 
+2.9.4
+

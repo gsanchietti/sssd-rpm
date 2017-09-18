@@ -1,0 +1,90 @@
+From 67e592572e655f19326cf821bbbe43411e8c7b06 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Fabiano=20Fid=C3=AAncio?= <fidencio@redhat.com>
+Date: Tue, 23 May 2017 22:44:24 +0200
+Subject: [PATCH 176/181] SYSDB: Internally expose sysdb_search_ts_matches()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This function will be used in the follow-up patches. As it's going to be
+"exposed", let's also rename it from search_ts_matches() to
+sysdb_search_ts_matches().
+
+Related:
+https://pagure.io/SSSD/sssd/issue/3369
+
+Signed-off-by: Fabiano Fidêncio <fidencio@redhat.com>
+
+Reviewed-by: Jakub Hrozek <jhrozek@redhat.com>
+(cherry picked from commit 347be58e1769ba90b49a7e5ec1678ef66987f6cd)
+---
+ src/db/sysdb_private.h |  7 +++++++
+ src/db/sysdb_search.c  | 20 ++++++++++----------
+ 2 files changed, 17 insertions(+), 10 deletions(-)
+
+diff --git a/src/db/sysdb_private.h b/src/db/sysdb_private.h
+index dfddd2dda9e593bd02d52dee7d06f520a11bbdf6..433220dcc0c35366dbbee41525e6c5932eb897f9 100644
+--- a/src/db/sysdb_private.h
++++ b/src/db/sysdb_private.h
+@@ -260,6 +260,13 @@ int sysdb_search_ts_groups(TALLOC_CTX *mem_ctx,
+                            const char **attrs,
+                            struct ldb_result *res);
+ 
++errno_t sysdb_search_ts_matches(TALLOC_CTX *mem_ctx,
++                                struct sysdb_ctx *sysdb,
++                                const char *attrs[],
++                                struct ldb_result *ts_res,
++                                const char *filter,
++                                struct ldb_result **_res);
++
+ /* Compares the modifyTimestamp attribute between old_entry and
+  * new_entry. Returns true if they differ (or either entry is missing
+  * the attribute) and false if the attribute is the same
+diff --git a/src/db/sysdb_search.c b/src/db/sysdb_search.c
+index 6b4b51383d89788052ab7e4b572e86abba5330db..0c04b84a584e047a0ba8243c9216547ea2791e60 100644
+--- a/src/db/sysdb_search.c
++++ b/src/db/sysdb_search.c
+@@ -482,12 +482,12 @@ done:
+     return ret;
+ }
+ 
+-static errno_t search_ts_matches(TALLOC_CTX *mem_ctx,
+-                                 struct sysdb_ctx *sysdb,
+-                                 const char *attrs[],
+-                                 struct ldb_result *ts_res,
+-                                 const char *filter,
+-                                 struct ldb_result **_res)
++errno_t sysdb_search_ts_matches(TALLOC_CTX *mem_ctx,
++                                struct sysdb_ctx *sysdb,
++                                const char *attrs[],
++                                struct ldb_result *ts_res,
++                                const char *filter,
++                                struct ldb_result **_res)
+ {
+     char *dn_filter;
+     TALLOC_CTX *tmp_ctx = NULL;
+@@ -595,8 +595,8 @@ int sysdb_enumpwent_filter(TALLOC_CTX *mem_ctx,
+         goto done;
+     }
+ 
+-    ret = search_ts_matches(tmp_ctx, domain->sysdb, attrs, &ts_res,
+-                            name_filter, &ts_cache_res);
++    ret = sysdb_search_ts_matches(tmp_ctx, domain->sysdb, attrs, &ts_res,
++                                  name_filter, &ts_cache_res);
+     if (ret != EOK && ret != ENOENT) {
+         goto done;
+     }
+@@ -1100,8 +1100,8 @@ int sysdb_enumgrent_filter(TALLOC_CTX *mem_ctx,
+         goto done;
+     }
+ 
+-    ret = search_ts_matches(tmp_ctx, domain->sysdb, attrs, &ts_res,
+-                            name_filter, &ts_cache_res);
++    ret = sysdb_search_ts_matches(tmp_ctx, domain->sysdb, attrs, &ts_res,
++                                  name_filter, &ts_cache_res);
+     if (ret != EOK && ret != ENOENT) {
+         goto done;
+     }
+-- 
+2.9.4
+

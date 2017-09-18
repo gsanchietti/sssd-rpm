@@ -1,0 +1,392 @@
+From 4c3780ced1b1507ebd8c3d0b91a3ef50b74e0b52 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Fabiano=20Fid=C3=AAncio?= <fidencio@redhat.com>
+Date: Tue, 25 Apr 2017 16:33:58 +0200
+Subject: [PATCH 126/127] CACHE_REQ: Make use of cache_req_ncache_filter_fn()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This patch makes use of cache_req_ncache_filter_fn() in order to process
+the result of a cache_req search and then filter out all the results
+that are present in the negative cache.
+
+The "post cache_req search" result processing is done basically in two
+different cases:
+- plugins which don't use name as an input token (group_by_id, user_by_id
+  and object_by_id), but still can be affected by filter_{users,groups}
+  options;
+- plugins responsible for groups and users enumeration (enum_groups and
+  enum_users);
+
+Resolves:
+https://pagure.io/SSSD/sssd/issue/3362
+
+Signed-off-by: Fabiano Fidêncio <fidencio@redhat.com>
+
+Reviewed-by: Pavel Březina <pbrezina@redhat.com>
+(cherry picked from commit 4ef0b19a5e8a327443d027e57487c8a1e4f654ce)
+---
+ src/responder/common/cache_req/cache_req_search.c  | 124 +++++++++++++++++++--
+ .../cache_req/plugins/cache_req_enum_groups.c      |  10 +-
+ .../cache_req/plugins/cache_req_enum_users.c       |  10 +-
+ .../cache_req/plugins/cache_req_group_by_id.c      |  10 +-
+ .../cache_req/plugins/cache_req_object_by_id.c     |  17 ++-
+ .../cache_req/plugins/cache_req_user_by_id.c       |  10 +-
+ src/responder/nss/nss_protocol_grent.c             |  12 --
+ src/responder/nss/nss_protocol_pwent.c             |  11 --
+ 8 files changed, 165 insertions(+), 39 deletions(-)
+
+diff --git a/src/responder/common/cache_req/cache_req_search.c b/src/responder/common/cache_req/cache_req_search.c
+index 8bc1530b341f587cb502fdf0ca3ed8d37cfb7d13..793dbc5042ae329b2cade5d1eb5a6d41102e264f 100644
+--- a/src/responder/common/cache_req/cache_req_search.c
++++ b/src/responder/common/cache_req/cache_req_search.c
+@@ -84,6 +84,87 @@ static void cache_req_search_ncache_add(struct cache_req *cr)
+     return;
+ }
+ 
++static errno_t cache_req_search_ncache_filter(TALLOC_CTX *mem_ctx,
++                                              struct cache_req *cr,
++                                              struct ldb_result *result,
++                                              struct ldb_result **_result)
++{
++    TALLOC_CTX *tmp_ctx;
++    struct ldb_result *filtered_result;
++    struct ldb_message **msgs;
++    size_t msg_count;
++    const char *name;
++    errno_t ret;
++
++    tmp_ctx = talloc_new(NULL);
++    if (tmp_ctx == NULL) {
++        return ENOMEM;
++    }
++
++    if (cr->plugin->ncache_filter_fn == NULL) {
++        CACHE_REQ_DEBUG(SSSDBG_TRACE_FUNC, cr,
++                        "This request type does not support filtering "
++                        "result by negative cache\n");
++
++        *_result = talloc_steal(mem_ctx, result);
++
++        ret = EOK;
++        goto done;
++    }
++
++    CACHE_REQ_DEBUG(SSSDBG_TRACE_FUNC, cr,
++                    "Filtering out results by negative cache\n");
++
++    msgs = talloc_zero_array(tmp_ctx, struct ldb_message *, result->count);
++    msg_count = 0;
++
++    for (size_t i = 0; i < result->count; i++) {
++        name = sss_get_name_from_msg(cr->domain, result->msgs[i]);
++        if (name == NULL) {
++            CACHE_REQ_DEBUG(SSSDBG_CRIT_FAILURE, cr,
++                  "sss_get_name_from_msg() returned NULL, which should never "
++                  "happen in this scenario!\n");
++            ret = ERR_INTERNAL;
++            goto done;
++        }
++
++        ret = cr->plugin->ncache_filter_fn(cr->ncache, cr->domain, name);
++        if (ret == EEXIST) {
++            CACHE_REQ_DEBUG(SSSDBG_TRACE_FUNC, cr,
++                            "[%s] filtered out! (negative cache)\n",
++                            name);
++            continue;
++        } else if (ret != EOK && ret != ENOENT) {
++            CACHE_REQ_DEBUG(SSSDBG_CRIT_FAILURE, cr,
++                            "Unable to check negative cache [%d]: %s\n",
++                            ret, sss_strerror(ret));
++            goto done;
++        }
++
++        msgs[msg_count] = talloc_steal(msgs, result->msgs[i]);
++        msg_count++;
++    }
++
++    if (msg_count == 0) {
++        ret = ENOENT;
++        goto done;
++    }
++
++    filtered_result = cache_req_create_ldb_result_from_msg_list(tmp_ctx, msgs,
++                                                                msg_count);
++    if (filtered_result == NULL) {
++        ret = ENOMEM;
++        goto done;
++    }
++
++    *_result = talloc_steal(mem_ctx, filtered_result);
++    ret = EOK;
++
++done:
++    talloc_free(tmp_ctx);
++    return ret;
++}
++
+ static errno_t cache_req_search_cache(TALLOC_CTX *mem_ctx,
+                                       struct cache_req *cr,
+                                       struct ldb_result **_result)
+@@ -338,10 +419,18 @@ static void cache_req_search_oob_done(struct tevent_req *subreq)
+ 
+ static void cache_req_search_done(struct tevent_req *subreq)
+ {
++    TALLOC_CTX *tmp_ctx;
+     struct cache_req_search_state *state;
+     struct tevent_req *req;
++    struct ldb_result *result = NULL;
+     errno_t ret;
+ 
++    tmp_ctx = talloc_new(NULL);
++    if (tmp_ctx == NULL) {
++        ret = ENOMEM;
++        goto done;
++    }
++
+     req = tevent_req_callback_data(subreq, struct tevent_req);
+     state = tevent_req_data(req, struct cache_req_search_state);
+ 
+@@ -349,23 +438,36 @@ static void cache_req_search_done(struct tevent_req *subreq)
+     talloc_zfree(subreq);
+ 
+     /* Get result from cache again. */
+-    ret = cache_req_search_cache(state, state->cr, &state->result);
+-    if (ret == ENOENT) {
+-        /* Only store entry in negative cache if DP request succeeded
+-         * because only then we know that the entry does not exist. */
+-        if (state->dp_success) {
+-            cache_req_search_ncache_add(state->cr);
++    ret = cache_req_search_cache(tmp_ctx, state->cr, &result);
++    if (ret != EOK) {
++        if (ret == ENOENT) {
++            /* Only store entry in negative cache if DP request succeeded
++             * because only then we know that the entry does not exist. */
++            if (state->dp_success) {
++                cache_req_search_ncache_add(state->cr);
++            }
+         }
+-        tevent_req_error(req, ENOENT);
+-        return;
+-    } else if (ret != EOK) {
+-        tevent_req_error(req, ret);
+-        return;
++        goto done;
++    }
++
++    /* ret == EOK */
++    ret = cache_req_search_ncache_filter(state, state->cr, result,
++                                         &state->result);
++    if (ret != EOK) {
++        goto done;
+     }
+ 
+     CACHE_REQ_DEBUG(SSSDBG_TRACE_FUNC, state->cr,
+                     "Returning updated object [%s]\n", state->cr->debugobj);
+ 
++done:
++    talloc_free(tmp_ctx);
++
++    if (ret != EOK) {
++        tevent_req_error(req, ret);
++        return;
++    }
++
+     tevent_req_done(req);
+     return;
+ }
+diff --git a/src/responder/common/cache_req/plugins/cache_req_enum_groups.c b/src/responder/common/cache_req/plugins/cache_req_enum_groups.c
+index 11ce9e90ff28f77078b025a44593a44be8f1f5c5..15350ca8279bc77c73bcc4abe51c97a8a37cb8c8 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_enum_groups.c
++++ b/src/responder/common/cache_req/plugins/cache_req_enum_groups.c
+@@ -55,6 +55,14 @@ cache_req_enum_groups_dp_send(TALLOC_CTX *mem_ctx,
+                                    SSS_DP_GROUP, NULL, 0, NULL);
+ }
+ 
++static errno_t
++cache_req_enum_groups_ncache_filter(struct sss_nc_ctx *ncache,
++                                    struct sss_domain_info *domain,
++                                    const char *name)
++{
++    return sss_ncache_check_group(ncache, domain, name);
++}
++
+ const struct cache_req_plugin cache_req_enum_groups = {
+     .name = "Enumerate groups",
+     .attr_expiration = SYSDB_CACHE_EXPIRE,
+@@ -75,7 +83,7 @@ const struct cache_req_plugin cache_req_enum_groups = {
+     .global_ncache_add_fn = NULL,
+     .ncache_check_fn = NULL,
+     .ncache_add_fn = NULL,
+-    .ncache_filter_fn = NULL,
++    .ncache_filter_fn = cache_req_enum_groups_ncache_filter,
+     .lookup_fn = cache_req_enum_groups_lookup,
+     .dp_send_fn = cache_req_enum_groups_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_enum_users.c b/src/responder/common/cache_req/plugins/cache_req_enum_users.c
+index e0647a0102d9568abdcebfbf0fb99fc2624d5565..a3ddcdd45548a2fa7c367f3fb3be103c115dedb4 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_enum_users.c
++++ b/src/responder/common/cache_req/plugins/cache_req_enum_users.c
+@@ -55,6 +55,14 @@ cache_req_enum_users_dp_send(TALLOC_CTX *mem_ctx,
+                                    SSS_DP_USER, NULL, 0, NULL);
+ }
+ 
++static errno_t
++cache_req_enum_users_ncache_filter(struct sss_nc_ctx *ncache,
++                                   struct sss_domain_info *domain,
++                                   const char *name)
++{
++    return sss_ncache_check_user(ncache, domain, name);
++}
++
+ const struct cache_req_plugin cache_req_enum_users = {
+     .name = "Enumerate users",
+     .attr_expiration = SYSDB_CACHE_EXPIRE,
+@@ -75,7 +83,7 @@ const struct cache_req_plugin cache_req_enum_users = {
+     .global_ncache_add_fn = NULL,
+     .ncache_check_fn = NULL,
+     .ncache_add_fn = NULL,
+-    .ncache_filter_fn = NULL,
++    .ncache_filter_fn = cache_req_enum_users_ncache_filter,
+     .lookup_fn = cache_req_enum_users_lookup,
+     .dp_send_fn = cache_req_enum_users_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_group_by_id.c b/src/responder/common/cache_req/plugins/cache_req_group_by_id.c
+index 5613bf67c6acd1b2ace00cf75221462f45ef6743..5ca64283a781318bc4e4d6920fff989c3f3919b4 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_group_by_id.c
++++ b/src/responder/common/cache_req/plugins/cache_req_group_by_id.c
+@@ -43,6 +43,14 @@ cache_req_group_by_id_ncache_check(struct sss_nc_ctx *ncache,
+ }
+ 
+ static errno_t
++cache_req_group_by_id_ncache_filter(struct sss_nc_ctx *ncache,
++                                    struct sss_domain_info *domain,
++                                    const char *name)
++{
++    return sss_ncache_check_group(ncache, domain, name);
++}
++
++static errno_t
+ cache_req_group_by_id_global_ncache_add(struct sss_nc_ctx *ncache,
+                                         struct cache_req_data *data)
+ {
+@@ -144,7 +152,7 @@ const struct cache_req_plugin cache_req_group_by_id = {
+     .global_ncache_add_fn = cache_req_group_by_id_global_ncache_add,
+     .ncache_check_fn = cache_req_group_by_id_ncache_check,
+     .ncache_add_fn = NULL,
+-    .ncache_filter_fn = NULL,
++    .ncache_filter_fn = cache_req_group_by_id_ncache_filter,
+     .lookup_fn = cache_req_group_by_id_lookup,
+     .dp_send_fn = cache_req_group_by_id_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_object_by_id.c b/src/responder/common/cache_req/plugins/cache_req_object_by_id.c
+index ff3d0e67862be365c56ab24396b4982e8addded0..339bd4f5fef827acc1aa3c123d041e426d9e4782 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_object_by_id.c
++++ b/src/responder/common/cache_req/plugins/cache_req_object_by_id.c
+@@ -50,6 +50,21 @@ cache_req_object_by_id_ncache_check(struct sss_nc_ctx *ncache,
+ }
+ 
+ static errno_t
++cache_req_object_by_id_ncache_filter(struct sss_nc_ctx *ncache,
++                                     struct sss_domain_info *domain,
++                                     const char *name)
++{
++    errno_t ret;
++
++    ret = sss_ncache_check_user(ncache, domain, name);
++    if (ret == EEXIST) {
++        ret = sss_ncache_check_group(ncache, domain, name);
++    }
++
++    return ret;
++}
++
++static errno_t
+ cache_req_object_by_id_global_ncache_add(struct sss_nc_ctx *ncache,
+                                          struct cache_req_data *data)
+ {
+@@ -111,7 +126,7 @@ const struct cache_req_plugin cache_req_object_by_id = {
+     .global_ncache_add_fn = cache_req_object_by_id_global_ncache_add,
+     .ncache_check_fn = cache_req_object_by_id_ncache_check,
+     .ncache_add_fn = NULL,
+-    .ncache_filter_fn = NULL,
++    .ncache_filter_fn = cache_req_object_by_id_ncache_filter,
+     .lookup_fn = cache_req_object_by_id_lookup,
+     .dp_send_fn = cache_req_object_by_id_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/common/cache_req/plugins/cache_req_user_by_id.c b/src/responder/common/cache_req/plugins/cache_req_user_by_id.c
+index b14b3738aa7721723f524ebd46301a3a9a1c712f..913f9be5bcc2dfd074b52cb3b15fb6948826e831 100644
+--- a/src/responder/common/cache_req/plugins/cache_req_user_by_id.c
++++ b/src/responder/common/cache_req/plugins/cache_req_user_by_id.c
+@@ -43,6 +43,14 @@ cache_req_user_by_id_ncache_check(struct sss_nc_ctx *ncache,
+ }
+ 
+ static errno_t
++cache_req_user_by_id_ncache_filter(struct sss_nc_ctx *ncache,
++                                   struct sss_domain_info *domain,
++                                   const char *name)
++{
++    return sss_ncache_check_user(ncache, domain, name);
++}
++
++static errno_t
+ cache_req_user_by_id_global_ncache_add(struct sss_nc_ctx *ncache,
+                                        struct cache_req_data *data)
+ {
+@@ -144,7 +152,7 @@ const struct cache_req_plugin cache_req_user_by_id = {
+     .global_ncache_add_fn = cache_req_user_by_id_global_ncache_add,
+     .ncache_check_fn = cache_req_user_by_id_ncache_check,
+     .ncache_add_fn = NULL,
+-    .ncache_filter_fn = NULL,
++    .ncache_filter_fn = cache_req_user_by_id_ncache_filter,
+     .lookup_fn = cache_req_user_by_id_lookup,
+     .dp_send_fn = cache_req_user_by_id_dp_send,
+     .dp_recv_fn = cache_req_common_dp_recv
+diff --git a/src/responder/nss/nss_protocol_grent.c b/src/responder/nss/nss_protocol_grent.c
+index 947463df93e188729959737efa4ac4f44a8459c4..ee228c722a153a1ba7aa8a1b30a1e551108424bb 100644
+--- a/src/responder/nss/nss_protocol_grent.c
++++ b/src/responder/nss/nss_protocol_grent.c
+@@ -241,18 +241,6 @@ nss_protocol_fill_grent(struct nss_ctx *nss_ctx,
+             continue;
+         }
+ 
+-        /* Check negative cache during enumeration. */
+-        if (cmd_ctx->enumeration) {
+-            ret = sss_ncache_check_group(nss_ctx->rctx->ncache,
+-                                         result->domain, name->str);
+-            if (ret == EEXIST) {
+-                DEBUG(SSSDBG_TRACE_FUNC,
+-                      "User [%s] filtered out! (negative cache)\n",
+-                      name->str);
+-                continue;
+-            }
+-        }
+-
+         /* Adjust packet size: gid, num_members + string fields. */
+ 
+         ret = sss_packet_grow(packet, 2 * sizeof(uint32_t)
+diff --git a/src/responder/nss/nss_protocol_pwent.c b/src/responder/nss/nss_protocol_pwent.c
+index cb643f29e2d5f0a0c55c51afd9def73813061aa7..b355d4fc90397f51e82545e56940be850f144d49 100644
+--- a/src/responder/nss/nss_protocol_pwent.c
++++ b/src/responder/nss/nss_protocol_pwent.c
+@@ -309,17 +309,6 @@ nss_protocol_fill_pwent(struct nss_ctx *nss_ctx,
+             continue;
+         }
+ 
+-        /* Check negative cache during enumeration. */
+-        if (cmd_ctx->enumeration) {
+-            ret = sss_ncache_check_user(nss_ctx->rctx->ncache,
+-                                        result->domain, name->str);
+-            if (ret == EEXIST) {
+-                DEBUG(SSSDBG_TRACE_FUNC,
+-                      "User [%s] filtered out! (negative cache)\n", name->str);
+-                continue;
+-            }
+-        }
+-
+         /* Adjust packet size: uid, gid + string fields. */
+ 
+         ret = sss_packet_grow(packet, 2 * sizeof(uint32_t)
+-- 
+2.9.3
+

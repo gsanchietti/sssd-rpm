@@ -1,0 +1,36 @@
+From 03bfcf1746b163fa3fbce9f2741db77064ac84e7 Mon Sep 17 00:00:00 2001
+From: Lukas Slebodnik <lslebodn@redhat.com>
+Date: Wed, 31 May 2017 17:35:27 +0200
+Subject: [PATCH 150/152] VALIDATOR: prevent duplicite report from subdomain
+ sections
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Issues is subdomain sections e.g. "[domain/A.test/B.A.test]" were
+reported twice.
+
+[rule/allowed_domain_options]: Attribute 'debug_leTYPOvel' is not allowed in section 'domain/A.test/B.A.test'. Check for typos.
+[rule/allowed_subdomain_options]: Attribute 'debug_leTYPOvel' is not allowed in section 'domain/A.test/B.A.test'. Check for typos.
+
+Reviewed-by: Michal Židek <mzidek@redhat.com>
+---
+ src/config/cfg_rules.ini | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/config/cfg_rules.ini b/src/config/cfg_rules.ini
+index 744446478e5d5489cd86d8e15ce8e178cf5e3a91..d6506b7c3cee13f7c5400a546deb787e755abc8b 100644
+--- a/src/config/cfg_rules.ini
++++ b/src/config/cfg_rules.ini
+@@ -296,7 +296,7 @@ option = responder_idle_timeout
+ 
+ [rule/allowed_domain_options]
+ validator = ini_allowed_options
+-section_re = ^\(domain\|application\)/.*$
++section_re = ^\(domain\|application\)/[^/]\+$
+ 
+ option = debug
+ option = debug_level
+-- 
+2.9.4
+
